@@ -4,7 +4,7 @@ import path from 'node:path'
 import { serve } from '@hono/node-server'
 import { getConnInfo } from '@hono/node-server/conninfo'
 import { serveStatic } from '@hono/node-server/serve-static'
-import type { CycleView, Health, LearningProposal, LinearIssueView, PrReview, PrView, ServerEvent, Settings, SettingsView, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
+import type { AskReply, AssistAction, CycleView, Health, LearningProposal, LinearIssueView, PrReview, PrView, ServerEvent, Settings, SettingsView, StartChoice, Ticket, TicketDiff, TodayItem, Triage } from '@ticketflow/shared'
 import { Hono, type MiddlewareHandler } from 'hono'
 import { cors } from 'hono/cors'
 import { getCookie, setCookie } from 'hono/cookie'
@@ -50,6 +50,8 @@ function safeEqual(a: string, b: string): boolean {
 export interface Controls {
   readonly health: () => Health
   readonly poll: () => Promise<void>
+  // Linear and the PRs, right now (the board's Refresh)
+  readonly refresh: () => Promise<void>
   readonly restartBot: () => Promise<void>
   readonly probe: () => Promise<void>
   readonly moveInLinear: (id: string, to: 'qa' | 'done') => Promise<Ticket>
@@ -70,6 +72,10 @@ export interface Controls {
   readonly mediaFile: (id: string, name: string) => string | null
   readonly stopAll: (shutdown: boolean) => Promise<{ stopped: readonly string[]; pending: string }>
   readonly settings: () => SettingsView
+  readonly today: () => Promise<TodayItem[]>
+  readonly triage: (force: boolean) => Promise<number>
+  readonly ask: (question: string, history: readonly { role: 'you' | 'metwo'; text: string }[]) => Promise<AskReply>
+  readonly runActions: (actions: readonly AssistAction[]) => Promise<{ action: AssistAction; ok: boolean; text: string }[]>
 }
 
 // The desktop shell serves the UI from its own origin and calls the daemon on localhost.
@@ -88,6 +94,21 @@ export function startServer(port: number, rootDir: string, store: Store, runner:
   const background = (what: string, work: Promise<unknown>) => void work.catch((e: unknown) => log.warn(`${what} failed`, e))
 
   app.get('/api/health', (c) => c.json(controls.health()))
+  app.get('/api/today', async (c) => c.json(await controls.today()))
+  app.post('/api/triage', async (c) => {
+    const { force } = (await c.req.json().catch(() => ({}))) as { force?: boolean }
+    background('triage', controls.triage(Boolean(force)))
+    return c.json({ ok: true })
+  })
+  app.post('/api/ask', async (c) => {
+    const { question, history } = (await c.req.json()) as { question: string; history?: { role: 'you' | 'metwo'; text: string }[] }
+    if (!question?.trim()) return c.json({ ok: false, error: 'ask something' }, 400)
+    return c.json(await controls.ask(question.trim(), history ?? []))
+  })
+  app.post('/api/assist/run', async (c) => {
+    const { actions } = (await c.req.json()) as { actions: AssistAction[] }
+    return c.json({ results: await controls.runActions(actions ?? []) })
+  })
   app.post('/api/control/pause', (c) => {
     runner.paused = true
     return c.json({ ok: true })
@@ -108,6 +129,10 @@ export function startServer(port: number, rootDir: string, store: Store, runner:
     if (!Number.isFinite(n)) return c.json({ ok: false, error: 'n must be a number' }, 400)
     runner.setMaxParallel(n)
     return c.json(controls.health())
+  })
+  app.post('/api/control/refresh', async (c) => {
+    await controls.refresh()
+    return c.json({ ok: true })
   })
   app.post('/api/control/poll', async (c) => {
     await controls.poll()
@@ -233,8 +258,13 @@ export function startServer(port: number, rootDir: string, store: Store, runner:
     if (list.some((i) => i.bytes.length > 10 * 1024 * 1024)) return c.json({ ok: false, error: 'images up to 10 MB each' }, 400)
     const t = store.get(id)
     if (!t?.worktree) return c.json({ ok: false, error: `${id} has no worktree yet; start it first` }, 400)
-    if (t.status === 'running' || t.status === 'queued') return c.json({ ok: false, error: `${id} has a lane running; send it when it finishes` }, 409)
+    const queued = t.status === 'running' || t.status === 'queued'
+    if (queued && t.queuedInstruction) return c.json({ ok: false, error: `${id} already has an instruction waiting; cancel it first` }, 409)
     background(`${id}: instruction`, runner.instruct(id, text, list))
+    return c.json({ ok: true, queued })
+  })
+  app.post('/api/tickets/:id/instruct/cancel', (c) => {
+    runner.dropQueued(c.req.param('id'))
     return c.json({ ok: true })
   })
   app.post('/api/tickets/:id/visual', (c) => {
@@ -247,6 +277,11 @@ export function startServer(port: number, rootDir: string, store: Store, runner:
   })
   app.post('/api/tickets/:id/visual/post', async (c) => {
     return c.json({ ok: true, url: await runner.postVisual(c.req.param('id')) })
+  })
+  app.post('/api/tickets/:id/pause-after', async (c) => {
+    const { on } = (await c.req.json().catch(() => ({}))) as { on?: boolean }
+    runner.setPauseAfter(c.req.param('id'), on !== false)
+    return c.json({ ok: true })
   })
   app.post('/api/tickets/:id/open-claude', async (c) => c.json({ ok: true, ...(await runner.openClaude(c.req.param('id'))) }))
   app.get('/api/tickets/:id/preview', (c) => c.json({ preview: runner.previewOf(c.req.param('id')) }))
@@ -390,12 +425,15 @@ export function startServer(port: number, rootDir: string, store: Store, runner:
       const onReview = (review: PrReview) => void push({ type: 'review', review })
       const onLine = (id: string, line: LiveLine) => void push({ type: 'live', id, line })
       const onLabels = (labelColors: Record<string, string>) => void push({ type: 'labels', labelColors })
+      const onTriage = (triage: Record<string, Triage>) => void push({ type: 'triage', triage })
       store.on('labels', onLabels)
+      store.on('triage', onTriage)
       store.on('ticket', onTicket)
       store.on('review', onReview)
       live.on('line', onLine)
       stream.onAbort(() => {
         store.off('labels', onLabels)
+        store.off('triage', onTriage)
         store.off('ticket', onTicket)
         store.off('review', onReview)
         live.off('line', onLine)

@@ -13,9 +13,9 @@ export function wireMessages(tg: Telegram): void {
     await tg.proposeInstruction(normalizeId(m[1] ?? ''), m[2] ?? '', tg.takePhotos())
   })
 
-  tg.bot.on('message:text', async (ctx) => {
+  tg.bot.on('message:text', async (ctx, next) => {
     const text = ctx.message.text
-    if (text.startsWith('/')) return
+    if (text.startsWith('/')) return next()
     const replied = ctx.message.reply_to_message
     const question = replied ? tg.questionMessages.get(replied.message_id) : undefined
     if (question) {
@@ -70,11 +70,16 @@ export function wireMessages(tg: Telegram): void {
       await ctx.answerCallbackQuery({ text: 'that instruction expired, send it again' })
       return
     }
-    await ctx.answerCallbackQuery({ text: `${p.id}: lane is on it` })
+    const busy = ['running', 'queued'].includes(tg.store.get(p.id)?.status ?? '')
+    await ctx.answerCallbackQuery({ text: busy ? `${p.id}: queued for when this run ends` : `${p.id}: lane is on it` })
     tg.runner.instruct(p.id, p.text, p.images).catch(async (error: unknown) => {
       await tg.sendPlain(`could not send it to ${p.id}: ${error instanceof Error ? error.message : String(error)}`)
     })
-    await tg.sendPlain(`🛠 ${p.id}: sent to the lane${p.images.length ? ` with ${p.images.length} screenshot(s)` : ''}. You’ll get the usual review message when it’s done.`)
+    await tg.sendPlain(
+      busy
+        ? `⏳ ${p.id}: a lane is running, so this waits and goes to it as soon as the run comes back.`
+        : `🛠 ${p.id}: sent to the lane${p.images.length ? ` with ${p.images.length} screenshot(s)` : ''}. You’ll get the usual review message when it’s done.`,
+    )
   })
 
   tg.bot.callbackQuery(/^tellfor:(\w+):(.+)$/, async (ctx) => {

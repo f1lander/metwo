@@ -25,6 +25,8 @@ import { Store } from './store.js'
 import { Telegram } from './telegram/index.js'
 import { Tunnel } from './tunnel.js'
 import { sources, syncKnowledge } from './knowledge.js'
+import { Assistant } from './assistant.js'
+import { registerAssistant } from './telegram/assistant.js'
 
 const env = loadEnv()
 const cfg = loadConfig(env.rootDir)
@@ -122,6 +124,7 @@ const reviews = new Reviews(cfg, store, runner, linear, {
   moved: (r) => telegram.notifier.reviewMoved(r),
   progress: (id, kind, line) => live.push(id, kind, line),
 })
+const assistant = new Assistant({ store, runner, reviews, dataDir: env.dataDir, cycle: () => linear.cycleView(), assign: (ids) => assignAndTrack(ids), autopilotStart: (id) => autopilotStart(id) })
 reviews.onResult = (ok, detail) => {
   health.reviews = ok ? { ...health.ok(), detail } : health.bad(detail)
 }
@@ -305,6 +308,7 @@ async function nudgeWhenIdle(): Promise<void> {
 
 async function main(): Promise<void> {
   log.info(`metwo daemon · repo ${cfg.repo.path} · knowledge ${sources(cfg).map((k) => k.name).join(', ') || 'none'}`)
+  registerAssistant(telegram, assistant)
   await telegram.start()
   if (cfg.server.tunnel && !env.dashboardToken) {
     throw new Error('server.tunnel is on but DASHBOARD_TOKEN is empty; refusing to expose the dashboard without auth')
@@ -314,6 +318,9 @@ async function main(): Promise<void> {
   startServer(cfg.server.port, env.rootDir, store, runner, live, env.dashboardToken, reviews, {
     health: healthSnapshot,
     poll: () => poll(),
+    refresh: async () => {
+      await Promise.allSettled([poll(), prSync.tick()])
+    },
     restartBot: () => telegram.restart(),
     moveInLinear: (id, to) => writer.move(id, to),
     note: (id, text) => {
@@ -358,8 +365,12 @@ async function main(): Promise<void> {
       return openInEditor(t.worktree, cfg.pipeline.editors)
     },
     stopAll: (shutdown) => stopEverything(shutdown),
+    today: () => assistant.today(),
+    triage: (force) => assistant.triage(force),
+    ask: (q, history) => assistant.ask(q, history),
+    runActions: (actions) => assistant.run(actions),
     settings: () => {
-      const pick = (c: typeof cfg) => ({ autopilot: c.autopilot, budget: c.budget, engines: c.engines, roles: { ...c.roles }, pipeline: { effort: c.pipeline.effort, maxParallel: c.pipeline.maxParallel } })
+      const pick = (c: typeof cfg) => ({ autopilot: c.autopilot, triage: c.triage, budget: c.budget, engines: c.engines, roles: { ...c.roles }, pipeline: { effort: c.pipeline.effort, maxParallel: c.pipeline.maxParallel } })
       return { overrides: store.snapshot().settings ?? {}, effective: pick(runner.config), defaults: pick(cfg) }
     },
   })
@@ -428,6 +439,10 @@ async function main(): Promise<void> {
   setInterval(() => void mainSync.tick(), cfg.pipeline.mainSyncMinutes * 60_000)
   setInterval(watchQuiet, 60_000)
   void watchBudget()
+  // with triage.auto: the cycle a minute after start and every few hours; cached per issue
+  const autoTriage = () => void (runner.config.triage.auto ? assistant.triage().catch((e: unknown) => log.warn('triage failed', e)) : undefined)
+  setTimeout(autoTriage, 60_000)
+  setInterval(autoTriage, 3 * 3_600_000)
   setInterval(() => void watchBudget(), 60_000)
   const syncDocs = () => void syncKnowledge(cfg).then((problems) => problems.forEach((p) => log.warn(`knowledge sync failed: ${p}`)))
   if (cfg.knowledge.sources.some((k) => k.git)) {

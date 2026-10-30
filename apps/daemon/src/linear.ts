@@ -120,7 +120,7 @@ const CYCLE = /* GraphQL */ `
         activeCycle {
           name number endsAt
           issues(first: 100, filter: { assignee: { null: true }, state: { type: { nin: ["completed", "canceled"] } } }) {
-            nodes { identifier id title url priority priorityLabel estimate state { name } labels(first: 5) { nodes { name color } } }
+            nodes { identifier id title description updatedAt url priority priorityLabel estimate state { name } labels(first: 5) { nodes { name color } } }
           }
         }
       }
@@ -133,7 +133,7 @@ interface CycleNode {
     name: string | null
     number: number
     endsAt: string
-    issues: { nodes: { identifier: string; id: string; title: string; url: string; priority: number; priorityLabel: string; estimate: number | null; state: { name: string } | null; labels: { nodes: { name: string; color?: string }[] } }[] }
+    issues: { nodes: { identifier: string; id: string; title: string; description?: string | null; updatedAt?: string; url: string; priority: number; priorityLabel: string; estimate: number | null; state: { name: string } | null; labels: { nodes: { name: string; color?: string }[] } }[] }
   } | null
 }
 
@@ -277,6 +277,8 @@ export class Linear {
           priorityLabel: i.priorityLabel,
           estimate: i.estimate ?? null,
           labels: this.names(i.labels.nodes),
+          description: (i.description ?? '').slice(0, 4000),
+          ...(i.updatedAt ? { updatedAt: i.updatedAt } : {}),
         }))
         .sort((a, b) => rank(a.priority) - rank(b.priority) || a.id.localeCompare(b.id, undefined, { numeric: true })),
     }

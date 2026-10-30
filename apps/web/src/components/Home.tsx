@@ -6,6 +6,7 @@ import { type Advice, advise, type Bucket, buckets, current, facts, type Grain, 
 import { href } from '../lib/route.js'
 import { needsMe, STATUS_LABEL, statusTone } from './status.js'
 import { Button, Pill, rise, stagger } from './ui.js'
+import { TodayLink } from './Today.js'
 
 // Fixed per engine, never by rank (dataviz palette, dark slots).
 const ENGINE_COLOR: Record<string, string> = { claude: '#3987e5', codex: '#199e70', cursor: '#d95926', hermes: '#c98500' }
@@ -51,6 +52,9 @@ export function Home({ tickets, health, reviews }: { tickets: readonly Ticket[];
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto flex w-full max-w-[1180px] flex-col gap-4 px-6 py-6 max-md:px-4 max-md:pb-24">
+        <motion.div variants={rise}>
+          <TodayLink tickets={tickets} />
+        </motion.div>
         <motion.div variants={rise} className="flex flex-wrap items-end gap-3">
           <div>
             <h1 className="text-lg font-semibold">{name}</h1>

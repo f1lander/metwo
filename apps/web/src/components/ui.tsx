@@ -1,3 +1,4 @@
+import type { Triage } from '@ticketflow/shared'
 import { AnimatePresence, type HTMLMotionProps, motion } from 'motion/react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { useLabelColor } from '../lib/labels.js'
@@ -128,10 +129,10 @@ export function Count({ value, className = '' }: { value: number; className?: st
 }
 
 // Determinate fill (stage-based) with a moving sheen while work is happening.
-export function Progress({ value, active }: { value: number; active: boolean }) {
+export function Progress({ value, active, warn = false }: { value: number; active: boolean; warn?: boolean }) {
   return (
     <div className="relative h-[3px] overflow-hidden rounded bg-line" role="progressbar" aria-valuenow={Math.round(value * 100)} aria-valuemin={0} aria-valuemax={100}>
-      <motion.div className="absolute inset-y-0 left-0 rounded bg-accent-fg" initial={{ width: 0 }} animate={{ width: `${Math.max(4, value * 100)}%` }} transition={{ type: 'spring', stiffness: 80, damping: 20 }} />
+      <motion.div className={`absolute inset-y-0 left-0 rounded ${warn ? 'bg-warn' : 'bg-accent-fg'}`} initial={{ width: 0 }} animate={{ width: `${Math.max(4, value * 100)}%` }} transition={{ type: 'spring', stiffness: 80, damping: 20 }} />
       {active && (
         <motion.div
           className="absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/45 to-transparent"
@@ -190,4 +191,21 @@ export function Label({ name }: { name: string }) {
 export function LabelDot({ name }: { name: string }) {
   const color = useLabelColor(name)
   return <span className="size-1.5 shrink-0 rounded-full" style={{ background: color ?? 'var(--color-dim)' }} />
+}
+
+const KIND_LABEL = { ui: 'UI', logic: 'logic', copy: 'copy', bug: 'bug', infra: 'infra', other: 'other' } as const
+
+// The AI's read of an issue: size and kind, green when autopilot can take it alone.
+export function TriageChip({ triage: t }: { triage: Triage | undefined }) {
+  if (!t) return null
+  return (
+    <span
+      title={`${t.why}${t.risk !== 'low' ? ` · ${t.risk} risk` : ''}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-px text-[11px] whitespace-nowrap ${t.easy ? 'border-[#27463a] bg-[#16281f] text-ok' : t.size === 'L' || t.risk === 'high' ? 'border-[#4a2a2f] bg-[#2a1a1d] text-bad' : 'border-line-2 bg-raised text-muted'}`}
+    >
+      <span className="font-semibold">{t.size}</span>
+      {KIND_LABEL[t.kind]}
+      {t.easy && <span aria-label="easy">· easy</span>}
+    </span>
+  )
 }

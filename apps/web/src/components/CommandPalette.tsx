@@ -87,6 +87,7 @@ function buildCommands(tickets: readonly Ticket[], route: Route, paused: boolean
     { id: 'cycle', group: 'Go to', label: 'Take issues from the current cycle', keywords: 'linear cycle assign unassigned find work', run: () => window.dispatchEvent(new Event('metwo:cycle')) },
     { id: 'home', group: 'Go to', label: 'Home', run: go(href.home) },
     { id: 'board', group: 'Go to', label: 'Board', run: go(href.board) },
+    { id: 'today', group: 'Go to', label: 'Today', keywords: 'brief plan what to do reviews cycle easy ask', run: go(href.today) },
     { id: 'settings', group: 'Go to', label: 'Settings', keywords: 'autopilot budget engines limits effort lanes', run: go(href.settings()) },
     { id: 'status', group: 'Go to', label: 'Status', keywords: 'health checks daemon', run: go(href.health) },
     { id: 'poll', group: 'metwo', label: 'Poll Linear now', keywords: 'refresh sync', run: act(() => controls.poll(), 'Linear polled') },

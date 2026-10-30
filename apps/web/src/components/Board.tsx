@@ -1,10 +1,13 @@
-import { type LiveLine, openComments, type Ticket } from '@ticketflow/shared'
+import { fmtMinutes, type LiveLine, openComments, type Ticket, usd } from '@ticketflow/shared'
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { actions, type LiveMap } from '../lib/api.js'
 import { href } from '../lib/route.js'
-import { canMarkReady, pushLine, COLUMNS, compactStat, greptileClear, modelName, plural, prState, priorityLabel, quietMinutes, sinceStart, STATUS_LABEL, STUCK_MINUTES, stageProgress, statusTone, summarySection } from './status.js'
-import { Button, ConfirmButton, Count, Label, LabelDot, Mono, Pill, Progress, timeAgo } from './ui.js'
+import { estLine, useRunClock } from './NowCard.js'
+import { useEstimates, useNow } from '../lib/estimates.js'
+import { canMarkReady, currentStep, lastChange, STEPS, pushLine, COLUMNS, compactStat, greptileClear, modelName, plural, prState, priorityLabel, quietMinutes, STATUS_LABEL, STUCK_MINUTES, stageProgress, statusTone, summarySection } from './status.js'
+import { useTriage } from '../lib/triage.js'
+import { Button, ConfirmButton, Count, Label, LabelDot, Mono, Pill, Progress, timeAgo, TriageChip } from './ui.js'
 import { visualState } from './Visual.js'
 import { openCycle } from './Cycle.js'
 import { failed } from '../lib/notice.js'
@@ -51,7 +54,8 @@ const QUICK: readonly [Filter['quick'][number], string][] = [
   ['pr', 'Has PR'],
 ]
 
-function FilterBar({ tickets, filter, set, shown }: { tickets: readonly Ticket[]; filter: Filter; set: (f: Filter) => void; shown: number }) {
+function FilterBar({ tickets, filter, set, shown, onRefresh }: { tickets: readonly Ticket[]; filter: Filter; set: (f: Filter) => void; shown: number; onRefresh?: (() => Promise<void>) | undefined }) {
+  const [spinning, setSpinning] = useState(false)
   const counts = new Map<string, number>()
   for (const t of tickets) for (const l of t.labels) counts.set(l, (counts.get(l) ?? 0) + 1)
   const labels = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -84,6 +88,29 @@ function FilterBar({ tickets, filter, set, shown }: { tickets: readonly Ticket[]
           {shown} shown · clear
         </button>
       ) : null}
+      {onRefresh && (
+        <button
+          type="button"
+          title="load the board again from the daemon"
+          disabled={spinning}
+          onClick={async () => {
+            setSpinning(true)
+            try {
+              await onRefresh()
+            } catch (err) {
+              failed(err)
+            } finally {
+              setSpinning(false)
+            }
+          }}
+          className={`${any ? '' : 'ml-auto '}flex shrink-0 items-center gap-1.5 rounded-md border border-line-2 px-2 py-1 text-muted hover:text-fg disabled:opacity-60`}
+        >
+          <motion.span aria-hidden="true" animate={spinning ? { rotate: 360 } : { rotate: 0 }} transition={spinning ? { duration: 0.8, repeat: Infinity, ease: 'linear' } : { duration: 0 }}>
+            ↻
+          </motion.span>
+          Refresh
+        </button>
+      )}
     </div>
   )
 }
@@ -101,7 +128,7 @@ function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; chi
   )
 }
 
-export function Board({ tickets: all, live }: { tickets: readonly Ticket[]; live: LiveMap }) {
+export function Board({ tickets: all, live, onRefresh }: { tickets: readonly Ticket[]; live: LiveMap; onRefresh?: () => Promise<void> }) {
   const [filter, setFilter] = useState<Filter>(readFilter)
   const set = (f: Filter) => {
     setFilter(f)
@@ -143,7 +170,7 @@ export function Board({ tickets: all, live }: { tickets: readonly Ticket[]; live
   return (
     <LayoutGroup>
       <div className="flex min-h-0 flex-1 flex-col">
-        <FilterBar tickets={all.filter((t) => t.status !== 'done' && t.status !== 'skipped')} filter={filter} set={set} shown={tickets.length} />
+        <FilterBar tickets={all.filter((t) => t.status !== 'done' && t.status !== 'skipped')} filter={filter} set={set} shown={tickets.length} onRefresh={onRefresh} />
         {/* phone: column tabs */}
         <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-line px-3 py-2 md:hidden" aria-label="columns">
           {columns.map((col, i) => (
@@ -229,6 +256,7 @@ function TicketCard({ ticket: t, last }: { ticket: Ticket; last: LiveLine | unde
   const reduce = useReducedMotion()
   const [busy, setBusy] = useState(false)
   const people = openComments(t)
+  const triage = useTriage(t.id)
   const [reply, setReply] = useState('')
   const act = (fn: () => Promise<unknown>) => async (e?: React.MouseEvent | React.FormEvent) => {
     e?.preventDefault()
@@ -249,7 +277,6 @@ function TicketCard({ ticket: t, last }: { ticket: Ticket; last: LiveLine | unde
   const flash = t.status === 'failed' ? 'rgba(240,140,140,.35)' : warm ? 'rgba(242,201,76,.32)' : t.status === 'pr_draft' ? 'rgba(111,209,157,.3)' : 'rgba(124,134,232,.35)'
   const p = priorityLabel(t.priority)
   const priority = p && !t.labels.includes(p) ? p : null
-  const elapsed = sinceStart(t)
   const manual = summarySection(t.summary, /needs manual test/i)
 
   return (
@@ -287,13 +314,12 @@ function TicketCard({ ticket: t, last }: { ticket: Ticket; last: LiveLine | unde
           <span className="text-muted">{t.id}</span>
           {t.status === 'assigned' && (
             <span className="text-dim">
-              {t.createdBy.split('@')[0]} · {timeAgo(t.seenAt)}
+              {t.createdBy.split('@')[0]}
             </span>
           )}
           {(t.status === 'running' || t.status === 'queued') && (
             <span className="text-accent-fg">
               {t.status === 'queued' ? 'queued' : [t.lane, t.model ? modelName(t.model) : null, t.effort].filter(Boolean).join(' · ')}
-              {elapsed && t.status === 'running' ? ` · ${elapsed}` : ''}
             </span>
           )}
           {quiet !== null && quiet >= 3 && (
@@ -349,8 +375,9 @@ function TicketCard({ ticket: t, last }: { ticket: Ticket; last: LiveLine | unde
 
         {t.status === 'assigned' && (
           <>
-            {(t.labels.length > 0 || priority) && (
+            {(t.labels.length > 0 || priority || triage) && (
               <div className="flex flex-wrap gap-1.5">
+                <TriageChip triage={triage} />
                 {t.labels.map((l) => (
                   <Label key={l} name={l} />
                 ))}
@@ -360,6 +387,7 @@ function TicketCard({ ticket: t, last }: { ticket: Ticket; last: LiveLine | unde
             <p className="text-xs leading-snug text-muted">
               Suggested <strong className="font-medium text-fg">{t.suggestedLane}</strong> · {t.reason}
             </p>
+            <CardEstimate ticket={t} />
             <div className="relative z-10 flex gap-1.5">
               <Button variant={t.suggestedLane === 'lite' ? 'primary' : 'default'} className="flex-1" disabled={busy} onClick={act(() => actions.start(t, 'lite'))}>
                 {t.suggestedLane === 'lite' ? 'Start lite' : 'Lite'}
@@ -379,7 +407,7 @@ function TicketCard({ ticket: t, last }: { ticket: Ticket; last: LiveLine | unde
 
         {(t.status === 'running' || t.status === 'queued') && (
           <>
-            <Progress value={stageProgress(t)} active={t.status === 'running'} />
+            <RunLine ticket={t} />
             <div className="relative h-4 overflow-hidden">
               <AnimatePresence mode="popLayout" initial={false}>
                 <motion.div
@@ -394,9 +422,7 @@ function TicketCard({ ticket: t, last }: { ticket: Ticket; last: LiveLine | unde
                 </motion.div>
               </AnimatePresence>
             </div>
-            <div className="relative z-10 flex justify-end">
-              <ConfirmButton label="Stop" confirm={`Stop ${t.id}`} disabled={busy} onConfirm={() => void act(() => actions.stop(t))()} />
-            </div>
+            <RunButtons ticket={t} busy={busy} act={act} />
           </>
         )}
 
@@ -528,7 +554,77 @@ function TicketCard({ ticket: t, last }: { ticket: Ticket; last: LiveLine | unde
             </div>
           </>
         )}
+        <LastChange ticket={t} />
       </motion.div>
     </motion.article>
+  )
+}
+
+function CardEstimate({ ticket: t }: { ticket: Ticket }) {
+  const line = estLine(useEstimates(t)[t.suggestedLane])
+  if (!line) return null
+  return (
+    <span className="self-start rounded-full border border-line-2 px-2 py-px text-[11px] text-fg-2" title={`${t.suggestedLane} lane, from your past runs on similar tickets`}>
+      ⏱ {line}
+    </span>
+  )
+}
+
+// The step it is on, time against the estimate and the spend so far; amber once over.
+function RunLine({ ticket: t }: { ticket: Ticket }) {
+  const { est, elapsed, spend, over } = useRunClock(t)
+  const step = t.stage ? STEPS[currentStep(t)] : null
+  const pct = elapsed !== null && est ? Math.min(1, elapsed / est.minutes[1]) : stageProgress(t)
+  return (
+    <>
+      {t.status === 'running' && (
+        <div className="flex items-baseline justify-between gap-2 text-[11px] text-muted">
+          <span className="min-w-0 truncate">
+            {step && <strong className="font-medium text-fg">{step}</strong>}
+            {t.stage ? ` · ${t.stage.name}` : ''}
+          </span>
+          <span className="shrink-0">
+            <strong className={`font-medium ${over ? 'text-warn' : 'text-fg'}`}>{elapsed !== null ? fmtMinutes(elapsed) : ''}</strong>
+            {est ? ` / ~${fmtMinutes(est.minutes[1])}` : ''}
+            {spend ? (
+              <>
+                {' · '}
+                <strong className="font-medium text-fg">
+                  {spend.approx ? '≈ ' : ''}
+                  {usd(spend.usd)}
+                </strong>
+              </>
+            ) : null}
+          </span>
+        </div>
+      )}
+      <Progress value={pct} active={t.status === 'running'} warn={over} />
+    </>
+  )
+}
+
+function RunButtons({ ticket: t, busy, act }: { ticket: Ticket; busy: boolean; act: (fn: () => Promise<unknown>) => (e?: React.MouseEvent) => Promise<void> }) {
+  const { over } = useRunClock(t)
+  return (
+    <div className="relative z-10 flex justify-end gap-1.5">
+      {t.status === 'running' && (over || t.pauseAfter) && (
+        <Button disabled={busy} onClick={act(() => actions.pauseAfter(t, !t.pauseAfter))}>
+          {t.pauseAfter ? 'Pausing · undo' : 'Pause after this step'}
+        </Button>
+      )}
+      <ConfirmButton label="Stop" confirm={`Stop ${t.id}`} disabled={busy} onConfirm={() => void act(() => actions.stop(t))()} />
+    </div>
+  )
+}
+
+// When the ticket last changed and what it was, at the foot of every open card.
+function LastChange({ ticket: t }: { ticket: Ticket }) {
+  useNow(30_000)
+  const c = lastChange(t)
+  return (
+    <div className="flex items-baseline gap-1.5 text-[11px] text-dim" title={`${c.what} · ${new Date(c.at).toLocaleString()}`}>
+      <span className="min-w-0 flex-1 truncate">{c.what}</span>
+      <span className="shrink-0">{timeAgo(c.at)} ago</span>
+    </div>
   )
 }

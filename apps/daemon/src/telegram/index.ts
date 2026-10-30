@@ -240,6 +240,8 @@ export class Telegram {
     }
   }
 
+  // set by registerAssistant: plain questions go to the assistant
+  askAssistant: ((question: string) => Promise<void>) | null = null
   readonly pending = new Map<string, { id: string | null; text: string; images: { name: string; bytes: Buffer }[] }>()
 
   // screenshots sent in the last 5 minutes go with the next instruction
@@ -271,11 +273,14 @@ export class Telegram {
       return
     }
     const open = this.store.all().filter((t) => t.worktree && !['done', 'skipped', 'running', 'queued'].includes(t.status)).slice(0, 8)
-    if (open.length === 0) {
-      await this.sendPlain('no ticket with a worktree to send that to')
+    // no ticket named and nothing with images: most likely a question for the assistant
+    if (this.askAssistant && (open.length === 0 || (p.images.length === 0 && /\?\s*$|^(what|which|que|qué|cual|cuál|cuales|cuáles|how|como|cómo|dame|show|muestra|take|toma|review|revisa)\b/i.test(p.text)))) {
+      this.pending.delete(key)
+      await this.askAssistant(p.text)
       return
     }
     const kb = new InlineKeyboard()
+    if (this.askAssistant) kb.text('🤔 ask metwo instead', `askq:${key}`).row()
     open.forEach((t, i) => {
       kb.text(t.id, `tellfor:${key}:${t.id}`)
       if (i % 3 === 2) kb.row()

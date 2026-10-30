@@ -109,6 +109,8 @@ export interface Config {
   // small tickets start on their own (and Linear moves to In Progress); with autoPush a small
   // ticket that passes every check also gets its draft PR. Never marks a PR ready.
   readonly autopilot: { readonly enabled: boolean; readonly autoPush: boolean; readonly maxPerDay: number }
+  // AI triage of the cycle: off = only when you press Triage; on = a few times a day, new and edited issues only
+  readonly triage: { readonly auto: boolean }
   // API-priced USD as the CLIs report it. regulate lowers effort and moves to cheaper engines as
   // spend grows; from 90 % lite lanes and at the limit every new lane use `fallback` ("auto": the
   // first of codex, cursor, opencode, hermes). planFirst sends lanes there from the start.
@@ -240,6 +242,7 @@ const DEFAULTS: Config = {
     curatorAt: '19:30',
   },
   autopilot: { enabled: false, autoPush: true, maxPerDay: 5 },
+  triage: { auto: false },
   budget: { daily: null, monthly: null, regulate: true, fallback: 'auto', planFirst: 'off' },
   github: {
     screenshots: 'browser',
@@ -322,5 +325,5 @@ export function effective(cfg: Config, s: Settings | undefined): Config {
   if (!s) return cfg
   const { since: _since, ...autopilot } = s.autopilot ?? {}
   const pipeline = { ...(s.effort ? { effort: s.effort } : {}), ...(s.maxParallel ? { maxParallel: s.maxParallel } : {}) }
-  return merge(cfg as unknown as Json, { engines: s.engines ?? {}, roles: s.roles ?? {}, autopilot, budget: s.budget ?? {}, pipeline } as Json) as unknown as Config
+  return merge(cfg as unknown as Json, { engines: s.engines ?? {}, roles: s.roles ?? {}, autopilot, budget: s.budget ?? {}, triage: s.triage ?? {}, pipeline } as Json) as unknown as Config
 }

@@ -46,6 +46,8 @@ export interface PrInfo {
   readonly head?: string
   readonly headSha?: string
   readonly labels?: readonly string[]
+  // who opened the PR (you, for your tickets); their own comments are not "to address"
+  readonly author?: string
 }
 
 // What the ticket page shows from Linear: the issue as people see it there.
@@ -178,6 +180,12 @@ export interface Ticket {
   readonly autopilot?: { readonly at: string; readonly held?: string }
   // changes an agent proposes to the PR description (checklists, known gaps) for you to approve
   readonly descProposal?: DescProposal
+  // what the lane is doing right now and since when; `phase` drives the stepper
+  readonly stage?: { readonly name: string; readonly phase: StagePhase; readonly at: string }
+  // stop at the next checkpoint (before the review pass or the supervisor) instead of going on
+  readonly pauseAfter?: boolean
+  // your instruction sent while a lane ran: it goes to the lane as soon as this run comes back
+  readonly queuedInstruction?: { readonly text: string; readonly images: readonly string[]; readonly at: string } | null
   // a push in progress (each step) or the reason the last one failed
   readonly pushing?: { readonly at: string; readonly step: string; readonly error?: string }
   // a QA round on the PR's preview deploy, against the ticket and the PR's checklists
@@ -187,11 +195,23 @@ export interface Ticket {
 }
 
 // Teammates' PR comments you have not dealt with yet.
-// Before comments were picked one by one, a fix pass took everything up to that moment.
+// Deploy bots, review bots and CI post as apps whose login GitHub does not always mark as a bot.
+const BOT_LOGINS = /(\[bot\]$|^cloudflare-|^vercel|^netlify|^github-actions|^greptile|^coderabbit|^codecov|^sonarcloud|^dependabot|^renovate|^changeset-bot|^linear$)/i
+const BOT_BODY = /^(<!--|## Deploying|##+ .*Preview|\| *Status *\||Preview URL|<img alt="Cloudflare)/i
+
+export function isBotComment(c: Pick<PrComment, 'author' | 'body' | 'bot'>): boolean {
+  return Boolean(c.bot) || BOT_LOGINS.test(c.author) || BOT_BODY.test(c.body.trim())
+}
+
+// Teammates' PR comments you have not dealt with yet: no bots, not your own, not a bare
+// "@greptile" tag. Before comments were picked one by one, a fix pass took everything up to then.
 export function openComments(t: Ticket): readonly PrComment[] {
   const lastPass = t.commentsHandled ? '' : ([...t.events].reverse().find((e) => e.kind === 'fix-comments' && /comment/.test(e.message ?? ''))?.at ?? '')
-  return (t.pr?.comments ?? []).filter((c) => !c.bot && !t.commentsHandled?.[c.id] && c.createdAt > lastPass)
+  const me = t.pr?.author
+  return (t.pr?.comments ?? []).filter((c) => !isBotComment(c) && c.author !== me && !/^@\w+\s*$/.test(c.body.trim()) && !t.commentsHandled?.[c.id] && c.createdAt > lastPass)
 }
+
+export type StagePhase = 'implementing' | 'review' | 'checks' | 'ready' | 'other'
 
 export interface PreviewQa {
   readonly status: 'running' | 'done' | 'failed'
@@ -332,6 +352,52 @@ export interface CycleIssue {
   readonly priorityLabel: string
   readonly estimate: number | null
   readonly labels: readonly string[]
+  readonly description?: string
+  readonly updatedAt?: string
+}
+
+// An AI read of an issue: how big, what kind, how risky, and whether autopilot can take it.
+export interface Triage {
+  readonly size: 'XS' | 'S' | 'M' | 'L'
+  readonly kind: 'ui' | 'logic' | 'copy' | 'bug' | 'infra' | 'other'
+  readonly risk: 'low' | 'medium' | 'high'
+  readonly easy: boolean
+  readonly why: string
+  readonly at: string
+  // the issue's updatedAt when it was read; a newer edit in Linear reads it again
+  readonly stamp: string
+}
+
+// Things the app can do for you; buttons, Telegram and the assistant all go through these.
+export type AssistAction =
+  | { readonly type: 'start'; readonly id: string; readonly lane: 'lite' | 'full' }
+  | { readonly type: 'take'; readonly ids: readonly string[] }
+  | { readonly type: 'review'; readonly id: string }
+  | { readonly type: 'visual'; readonly id: string }
+  | { readonly type: 'preview_qa'; readonly id: string }
+  | { readonly type: 'update_main'; readonly id: string }
+  | { readonly type: 'address_comments'; readonly id: string }
+  | { readonly type: 'resume'; readonly id: string }
+  | { readonly type: 'triage' }
+
+export interface TodayItem {
+  readonly key: string
+  readonly group: 'now' | 'reviews' | 'pick'
+  readonly id: string
+  readonly title: string
+  readonly why: string
+  readonly tone: 'bad' | 'warn' | 'accent' | 'ok' | 'neutral'
+  // where it lives in the app, and the one button that moves it forward
+  readonly href: 'ticket' | 'review' | 'cycle'
+  readonly action?: { readonly label: string; readonly do: AssistAction }
+  readonly triage?: Triage
+}
+
+export interface AskReply {
+  readonly answer: string
+  // tickets, PRs or cycle issues to show as cards under the answer
+  readonly ids: readonly string[]
+  readonly plan: readonly { readonly action: AssistAction; readonly why: string }[]
 }
 
 export interface CycleView {
@@ -354,6 +420,7 @@ export interface Settings {
   readonly effort?: Effort
   readonly paused?: boolean
   readonly autopilot?: { readonly enabled?: boolean; readonly autoPush?: boolean; readonly maxPerDay?: number; readonly since?: string }
+  readonly triage?: { readonly auto?: boolean }
   readonly budget?: { readonly daily?: number | null; readonly monthly?: number | null; readonly regulate?: boolean; readonly fallback?: string; readonly planFirst?: PlanFirst }
   readonly engines?: {
     readonly codex?: { readonly enabled?: boolean; readonly model?: string }
@@ -376,6 +443,7 @@ export interface Settings {
 // The Settings page: your overrides, what is in effect, and the config file's values to reset to.
 export interface SettingsValues {
   readonly autopilot: { readonly enabled: boolean; readonly autoPush: boolean; readonly maxPerDay: number }
+  readonly triage: { readonly auto: boolean }
   readonly budget: { readonly daily: number | null; readonly monthly: number | null; readonly regulate: boolean; readonly fallback: string; readonly planFirst: PlanFirst }
   readonly engines: {
     readonly codex: { readonly enabled: boolean; readonly model: string }
@@ -409,11 +477,16 @@ export interface DaemonState {
   readonly nextPortIndex: number
   // runtime overrides set from the app or Telegram; they win over the config file
   readonly settings?: Settings
+  // spend outside tickets and reviews (triage, assistant questions), for the budget
+  readonly spend?: readonly { readonly at: string; readonly what: string; readonly cost: number }[]
+  // AI triage per issue id, for the cycle and your tickets
+  readonly triage?: Readonly<Record<string, Triage>>
   // Linear label name → its color in Linear ("#bec2c8")
   readonly labelColors?: Readonly<Record<string, string>>
 }
 
 export type ServerEvent =
+  | { readonly type: 'triage'; readonly triage: Readonly<Record<string, Triage>> }
   | { readonly type: 'labels'; readonly labelColors: Readonly<Record<string, string>> }
   | { readonly type: 'snapshot'; readonly state: DaemonState }
   | { readonly type: 'ticket'; readonly ticket: Ticket }
@@ -492,3 +565,4 @@ export interface Digest {
   readonly lanesToday: number
 }
 export * from './text.js'
+export * from './estimate.js'

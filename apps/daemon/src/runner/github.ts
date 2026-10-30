@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { type GreptileFinding, type GreptileReview, markdownSection, type PrComment, type PrInfo, type Ticket } from '@ticketflow/shared'
+import { type GreptileFinding, type GreptileReview, isBotComment, markdownSection, type PrComment, type PrInfo, type Ticket } from '@ticketflow/shared'
 import { git, sh, shInput } from './shell.js'
 
 export async function pushBranch(worktree: string, branch: string): Promise<void> {
@@ -49,6 +49,7 @@ interface GhPrView {
   readonly isDraft: boolean
   readonly body: string
   readonly labels?: readonly { readonly name: string }[]
+  readonly author?: { readonly login: string }
   readonly headRefName: string
   readonly headRefOid: string
   readonly reviewDecision: string
@@ -75,7 +76,7 @@ export async function fetchPrInfo(worktree: string, branch: string, greptileBot 
   try {
     const { stdout } = await sh(
       'gh',
-      ['pr', 'view', branch, '--json', 'number,url,state,isDraft,reviewDecision,statusCheckRollup,comments,reviews,body,headRefName,headRefOid,labels'],
+      ['pr', 'view', branch, '--json', 'number,url,state,isDraft,reviewDecision,statusCheckRollup,comments,reviews,body,headRefName,headRefOid,labels,author'],
       worktree,
     )
     view = JSON.parse(stdout) as GhPrView
@@ -86,7 +87,7 @@ export async function fetchPrInfo(worktree: string, branch: string, greptileBot 
   const inline = JSON.parse(inlineJson) as readonly GhInlineComment[]
 
   const comments: PrComment[] = [
-    ...view.comments.map((c) => ({ id: `issue-${c.id}`, kind: 'issue' as const, author: c.author.login, body: c.body, url: c.url, createdAt: c.createdAt, bot: c.author.is_bot === true || c.author.login.endsWith('[bot]') })),
+    ...view.comments.map((c) => ({ id: `issue-${c.id}`, kind: 'issue' as const, author: c.author.login, body: c.body, url: c.url, createdAt: c.createdAt, bot: c.author.is_bot === true || isBotComment({ author: c.author.login, body: c.body }) })),
     ...view.reviews
       .filter((r) => r.body.trim())
       .map((r) => ({ id: `review-${r.id}`, kind: 'review' as const, author: r.author.login, body: `[${r.state}] ${r.body}`, url: r.url, createdAt: r.submittedAt })),
@@ -94,7 +95,7 @@ export async function fetchPrInfo(worktree: string, branch: string, greptileBot 
       id: `inline-${c.id}`,
       kind: 'inline' as const,
       author: c.user.login,
-      bot: c.user.type === 'Bot' || c.user.login.endsWith('[bot]'),
+      bot: c.user.type === 'Bot' || isBotComment({ author: c.user.login, body: c.body }),
       body: c.body,
       path: c.path,
       ...(c.line !== null ? { line: c.line } : {}),
@@ -112,6 +113,7 @@ export async function fetchPrInfo(worktree: string, branch: string, greptileBot 
     head: view.headRefName,
     headSha: view.headRefOid,
     labels: (view.labels ?? []).map((l) => l.name),
+    ...(view.author?.login ? { author: view.author.login } : {}),
     state: view.state,
     isDraft: view.isDraft,
     ci: rollupToCi(view.statusCheckRollup),

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 export type SettingsTab = 'general' | 'budget' | 'engines' | 'integrations' | 'status'
 const TABS: readonly SettingsTab[] = ['general', 'budget', 'engines', 'integrations', 'status']
 
-export type Route = { readonly page: 'home' } | { readonly page: 'board' } | { readonly page: 'reviews' } | { readonly page: 'review'; readonly id: string } | { readonly page: 'ticket'; readonly id: string } | { readonly page: 'settings'; readonly tab: SettingsTab } | { readonly page: 'learnings' }
+export type Route = { readonly page: 'home' } | { readonly page: 'today' } | { readonly page: 'board' } | { readonly page: 'reviews' } | { readonly page: 'review'; readonly id: string } | { readonly page: 'ticket'; readonly id: string } | { readonly page: 'settings'; readonly tab: SettingsTab } | { readonly page: 'learnings' }
 
 function parse(hash: string): Route {
   const ticket = /^#\/t\/([A-Za-z]+-\d+)/.exec(hash)
@@ -16,6 +16,7 @@ function parse(hash: string): Route {
   if (settings) return { page: 'settings', tab: TABS.find((t) => t === settings[1]) ?? 'general' }
   if (hash.startsWith('#/learnings')) return { page: 'learnings' }
   if (hash.startsWith('#/board')) return { page: 'board' }
+  if (hash.startsWith('#/today')) return { page: 'today' }
   return { page: 'home' }
 }
 
@@ -31,6 +32,7 @@ export function useRoute(): Route {
 
 export const href = {
   home: '#/',
+  today: '#/today',
   board: '#/board',
   ticket: (id: string) => `#/t/${id}`,
   reviews: '#/reviews',

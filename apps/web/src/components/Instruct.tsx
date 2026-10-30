@@ -39,11 +39,11 @@ export function Instruct({ ticket: t }: { ticket: Ticket }) {
     setBusy(true)
     setNote(null)
     try {
-      await actions.instruct(t, text, shots)
+      const r = await actions.instruct(t, text, shots)
       setText('')
       setShots([])
       setOpen(false)
-      setNote('Sent. The lane is on it; it comes back to review when done.')
+      setNote(r.queued ? null : 'Sent. The lane is on it; it comes back to review when done.')
     } catch (err) {
       setNote(err instanceof Error ? err.message : String(err))
     } finally {
@@ -51,14 +51,45 @@ export function Instruct({ ticket: t }: { ticket: Ticket }) {
     }
   }
 
+  const queued = t.queuedInstruction
+  if (queued) {
+    return (
+      <div className="flex items-start gap-3 rounded-lg border border-accent/40 bg-accent/5 px-3.5 py-2.5">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent/20 text-[13px] text-accent-fg" aria-hidden="true">
+          ⏳
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="text-[13px] font-medium text-fg">Queued for when this run ends</span>
+          <span className="line-clamp-2 text-[11.5px] text-muted">
+            {queued.text}
+            {queued.images.length ? ` · ${queued.images.length} image${queued.images.length === 1 ? '' : 's'}` : ''}
+          </span>
+        </span>
+        <Button
+          variant="ghost"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              await actions.cancelQueued(t)
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
+    )
+  }
+
   if (!open) {
     return (
       <div className="flex flex-col gap-1.5">
         <button
           type="button"
-          disabled={running}
           onClick={() => setOpen(true)}
-          title={running ? 'a lane is running on this ticket' : 'describe a change, attach screenshots'}
+          title={running ? 'it waits and goes to the lane as soon as this run comes back' : 'describe a change, attach screenshots'}
           className="group flex w-full items-center gap-3 rounded-lg border border-dashed border-accent/60 bg-accent/5 px-3.5 py-2.5 text-left transition-colors hover:border-accent hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent/20 text-[15px] text-accent-fg" aria-hidden="true">
@@ -66,7 +97,7 @@ export function Instruct({ ticket: t }: { ticket: Ticket }) {
           </span>
           <span className="flex flex-col">
             <span className="text-[13px] font-medium text-fg">Tell the agent what to change</span>
-            <span className="text-[11.5px] text-muted">{running ? 'A lane is running on this ticket; try when it finishes' : 'Describe it in your words, paste a screenshot. Nothing is pushed.'}</span>
+            <span className="text-[11.5px] text-muted">{running ? 'A lane is running: it waits and goes as soon as this run comes back' : 'Describe it in your words, paste a screenshot. Nothing is pushed.'}</span>
           </span>
           <span className="ml-auto text-xs text-accent-fg opacity-0 transition-opacity group-hover:opacity-100 max-md:hidden">Open</span>
         </button>
@@ -137,8 +168,8 @@ export function Instruct({ ticket: t }: { ticket: Ticket }) {
           <Button variant="ghost" onClick={() => setOpen(false)}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy || !text.trim() || running} onClick={() => void send()}>
-            {busy ? 'Sending…' : 'Send to the lane'}
+          <Button variant="primary" disabled={busy || !text.trim()} onClick={() => void send()}>
+            {busy ? 'Sending…' : running ? 'Queue for after this run' : 'Send to the lane'}
           </Button>
         </span>
       </div>

@@ -36,28 +36,32 @@ export function needsMe(t: Ticket): boolean {
   return ['needs_input', 'review_ready', 'no_change', 'stopped', 'failed'].includes(t.status)
 }
 
-export const STEPS = ['Assigned', 'Implementing', 'Review pass', 'Review ready', 'PR', 'Merged'] as const
+export const STEPS = ['Assigned', 'Implementing', 'Review pass', 'Gates + supervisor', 'Your review', 'PR', 'Merged'] as const
+
+const PHASE_STEP = { implementing: 1, review: 2, checks: 3, ready: 4, other: 1 } as const
 
 export function currentStep(t: Ticket): number {
-  const lastKind = t.events.at(-1)?.kind
+  const phase = t.stage ? PHASE_STEP[t.stage.phase] : t.events.at(-1)?.kind === 'review' ? 2 : 1
   switch (t.status) {
     case 'assigned':
     case 'skipped':
       return 0
     case 'queued':
+      return 1
+    case 'running':
+      // a visual check or QA round on an open PR runs without leaving the PR step
+      return t.pr && t.stage?.phase !== 'implementing' ? 5 : Math.min(phase, 3)
     case 'needs_input':
     case 'stopped':
     case 'failed':
-      return t.events.some((e) => e.kind === 'review') && t.status === 'failed' ? 2 : 1
-    case 'running':
-      return lastKind === 'review' ? 2 : 1
+      return Math.min(phase, 3)
     case 'review_ready':
     case 'no_change':
-      return 3
-    case 'pr_draft':
       return 4
-    case 'done':
+    case 'pr_draft':
       return 5
+    case 'done':
+      return 6
   }
 }
 
@@ -172,4 +176,12 @@ export function laneLabel(t: Ticket, models?: Readonly<Record<string, { model: s
 export function pushLine(t: Ticket): { text: string; bad: boolean } | null {
   if (!t.pushing) return null
   return t.pushing.error ? { text: t.pushing.error, bad: true } : { text: `${t.pushing.step}…`, bad: false }
+}
+
+// The latest thing that happened on the ticket (an event or a journal entry), for "updated 10m ago".
+export function lastChange(t: Ticket): { readonly at: string; readonly what: string } {
+  const ev = t.events.at(-1)
+  const j = t.journal?.at(-1)
+  const pick = ev && (!j || ev.at >= j.at) ? { at: ev.at, what: ev.message || ev.kind } : j ? { at: j.at, what: j.title } : null
+  return pick ?? { at: t.updatedAt || t.seenAt, what: 'seen in Linear' }
 }

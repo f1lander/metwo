@@ -14,6 +14,7 @@ export function spendSince(store: Store, from: number): number {
   }
   for (const t of store.all()) add(t.journal)
   for (const r of store.reviews()) add(r.journal)
+  for (const s of store.snapshot().spend ?? []) if (Date.parse(s.at) >= from) total += s.cost
   return Math.round(total * 100) / 100
 }
 

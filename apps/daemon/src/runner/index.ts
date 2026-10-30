@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { type BudgetStatus, type Effort, type Lane, markdownSection, type MediaFile, openComments, type StartChoice, type SupervisionReport, type Ticket, type VisualReport } from '@ticketflow/shared'
+import { type BudgetStatus, type Effort, type StagePhase, type Lane, markdownSection, type MediaFile, openComments, type StartChoice, type SupervisionReport, type Ticket, type VisualReport } from '@ticketflow/shared'
 import { regulatedEffort } from '../budget.js'
 import { type Config, effective } from '../config.js'
 import { enabledEngines, type Engine, type EngineId, parseEngineRef, type RunResult } from '../engines/index.js'
@@ -182,6 +182,7 @@ export class Runner {
   }
 
   private progress(ticket: Ticket, kind: 'text' | 'tool' | 'stage', line: string): void {
+    if (kind === 'stage') this.store.patch(ticket.id, { stage: { name: line, phase: phaseOf(line), at: new Date().toISOString() } })
     const r = this.recent.get(ticket.id) ?? { at: 0, lines: [] }
     r.at = Date.now()
     r.lines.push(`${new Date().toISOString().slice(11, 16)} ${line.split('\n')[0]?.slice(0, 200) ?? ''}`)
@@ -203,6 +204,15 @@ export class Runner {
     this.active.delete(id)
     this.controllers.delete(id)
     this.tasks.delete(id)
+    // an instruction you sent while it ran goes now, as a follow-up on the same session
+    const t = this.store.get(id)
+    const q = t?.queuedInstruction
+    if (q && (t.status === 'review_ready' || t.status === 'no_change' || t.status === 'pr_draft')) {
+      this.store.patch(id, { queuedInstruction: null })
+      setTimeout(() => {
+        this.sendInstruction(id, q.text, q.images).catch((e: unknown) => log.warn(`${id}: queued instruction failed`, e))
+      }, 0)
+    }
   }
 
   private signalOf(id: string): AbortSignal | undefined {
@@ -244,6 +254,20 @@ export class Runner {
     } finally {
       this.stopping.delete(id)
     }
+  }
+
+  // Pause after this step: the lane finishes what it is doing and stops before the next one.
+  setPauseAfter(id: string, on: boolean): Ticket {
+    const t = this.store.get(id)
+    if (!t) throw new Error(`unknown ticket ${id}`)
+    return this.store.patch(id, { pauseAfter: on }, on ? { kind: 'stop', message: 'will pause after this step' } : undefined)
+  }
+
+  private pausePoint(id: string, next: string): void {
+    if (!this.store.get(id)?.pauseAfter) return
+    this.store.patch(id, { pauseAfter: false })
+    this.park(id, this.tasks.get(id) ?? { task: 'lane', from: 'running' }, `paused by you before ${next}`)
+    throw new Stopped(id)
   }
 
   // Every running lane, at once. Queued tickets stay queued; `pause` keeps them from starting.
@@ -728,7 +752,8 @@ Reply in 1 to 3 short sentences, plain and friendly, no greeting, no sign-off, n
   async instruct(id: string, text: string, images: readonly { name: string; bytes: Buffer }[] = []): Promise<void> {
     const ticket = this.store.get(id)
     if (!ticket?.worktree) throw new Error(`${id} has no worktree yet; start it first`)
-    if (this.active.has(id) || ticket.status === 'running' || ticket.status === 'queued') throw new Error(`${id} has a lane running; send it when it finishes`)
+    const busy = this.active.has(id) || ticket.status === 'running' || ticket.status === 'queued'
+    if (busy && ticket.queuedInstruction) throw new Error(`${id} already has an instruction waiting for this run to end`)
     const n = (ticket.journal ?? []).filter((j) => j.kind === 'note' && j.title.startsWith('You asked')).length + 1
     const dir = path.join(this.flowDir(id), 'feedback')
     mkdirSync(dir, { recursive: true })
@@ -738,6 +763,21 @@ Reply in 1 to 3 short sentences, plain and friendly, no greeting, no sign-off, n
       writeFileSync(file, img.bytes)
       return file
     })
+    if (busy) {
+      this.store.patch(id, { queuedInstruction: { text, images: saved, at: new Date().toISOString() } })
+      this.store.journal(id, { kind: 'note', title: 'Queued for when this run ends', body: text })
+      return
+    }
+    await this.sendInstruction(id, text, saved)
+  }
+
+  dropQueued(id: string): Ticket {
+    return this.store.patch(id, { queuedInstruction: null })
+  }
+
+  private async sendInstruction(id: string, text: string, saved: readonly string[]): Promise<void> {
+    const ticket = this.store.get(id)
+    if (!ticket?.worktree) throw new Error(`${id} has no worktree`)
     const visual = saved.length > 0 || /visual|overlap|layout|align|spacing|padding|title|icon|button|screen|mobile|desktop|color|font/i.test(text)
     const prompt = instructPrompt(ticket.id, ticket.prUrl, text, saved, visual, this.flowDir(id))
     this.store.patch(id, { status: 'running' }, { kind: 'answer', message: `your instruction: ${text.slice(0, 120)}` })
@@ -1119,12 +1159,17 @@ Reply in 1 to 3 short sentences, plain and friendly, no greeting, no sign-off, n
     }
 
     // saving budget: lite tickets skip the extra review pass (the gates and the supervisor still run)
-    if (this.cfg.pipeline.reviewPass && !followUp && round === 0 && !(regulated && lane === 'lite')) await this.reviewPass(ticket, wt, impl.engine.id)
+    if (this.cfg.pipeline.reviewPass && !followUp && round === 0 && !(regulated && lane === 'lite')) {
+      this.pausePoint(id, 'the review pass')
+      await this.reviewPass(ticket, wt, impl.engine.id)
+    }
 
     // First implementation and the supervisor's own rounds get supervised; your follow-ups don't.
     if (!followUp) {
+      this.pausePoint(id, 'the gates and the supervisor')
       const report = await this.supervise(ticket, wt, impl.engine.id, round)
       if (report && report.verdict !== 'pass' && round < this.cfg.roles.supervisorRounds) {
+        this.pausePoint(id, `supervisor round ${round + 1}`)
         this.progress(ticket, 'stage', `supervisor: ${report.verdict}, back to the implementer`)
         await this.runLane(id, fixPrompt(report), { resume: this.store.get(id)?.sessionId, round: round + 1 })
         return
@@ -1177,4 +1222,13 @@ async function touchesUi(worktree: string, base: string): Promise<boolean> {
 
 function firstLine(text: string): string {
   return text.split('\n').find((l) => l.trim())?.trim().slice(0, 240) ?? 'no change needed'
+}
+
+// The stepper's phase for a stage line the runner reports.
+function phaseOf(line: string): StagePhase {
+  if (/^review pass/.test(line)) return 'review'
+  if (/^re-running the gates$|^supervisor: (?!.*back to)/.test(line)) return 'checks'
+  if (/^review ready|^no change/.test(line)) return 'ready'
+  if (/^(reading the ticket|implementing|resumed|supervisor: .*back to|merging)/.test(line)) return 'implementing'
+  return 'other'
 }

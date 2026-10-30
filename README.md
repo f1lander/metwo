@@ -1,7 +1,3 @@
-
-
-
-
 <p align="center">
   <img src="apps/web/public/metwo-light.svg" alt="metwo" width="240">
 </p>
@@ -12,11 +8,6 @@
 
 <p align="center">
   Linear · Telegram · git worktrees · Claude Code / Codex / Cursor / OpenCode / Hermes · Playwright · GitHub
-</p>
-
-
-<p align="center">
-  <img src="docs/metwo-demo.gif" alt="metwo demo" width="100%">
 </p>
 
 ---
@@ -40,9 +31,11 @@ Linear ──▶ Telegram / board ──▶ lane in .worktrees/<ID> ──▶ ga
 
 | | |
 | --- | --- |
+| **Today** | Its own page: a brief from rules (no AI) of what needs you, PRs to review and what to pick from the cycle, three per group, each with its button. Below it, ask in plain words ("what first?", "which cycle tickets are UI only?", "take the easy ones"), and a list of what needs you, PRs to review and what to pick from the cycle, each with its button. Telegram: `/today`, `/ask` or just write the question. |
+| **Triage** | An AI read of every cycle issue and your new tickets: size, kind, risk, and whether autopilot can take it. **Take the easy ones** assigns them and starts autopilot. |
 | **Home** | What shipped, PRs opened, spend, time to PR, how often work came back clean; what waits for you; tips to spend less. |
 | **Board** | Tickets by status with live lane logs. Start on `lite`, `full` or `max`, on any engine. |
-| **Ticket page** | Live log, diff, before/after screenshots, the visual verdict, the supervisor's verdict, the Linear issue and the PR. Tell the agent what to change in plain words. |
+| **Ticket page** | A seven-step stepper (assigned → implementing → review pass → gates + supervisor → your review → PR → merged) with each step's result, a card for what is happening now or what you do next, and every link in one row. Tabs for the summary, the diff, the PR description, the visual check and the Linear issue; on the right the activity, the PR comments and the live log. Tell the agent what to change in plain words, even while it runs. |
 | **Reviews** | PRs you were asked to review. metwo checks them out, runs install, the gates and the app, drafts findings; you pick what to post. |
 | **Autopilot** | Small tickets start by themselves, move to In Progress, and get a draft PR when every check passes. |
 | **Budget** | Daily and monthly limits, alerts at 50/80/100 %, lower effort and plan or free engines as spend grows. |
@@ -212,6 +205,19 @@ script (apps-monorepo) get the ENS stack preset without any config.
   GitHub's suggested reviewers. Opening, readying, merging or closing on GitHub shows up here.
 - **Stop / Resume**: Stop kills the lane and its dev servers and writes `RESUME.md`; Resume
   continues the same session. **Stop everything** (Settings → Status, `/stopall`) does it for all.
+- **Pause after this step**: lets the current step finish and parks the ticket before the next
+  one (the review pass, the gates and supervisor, or another supervisor round). Resume carries on.
+- **Estimates**: before you start, each lane shows the time and cost range of your own past runs on
+  similar tickets (same triage size and kind, else a shared label), and how often they came back
+  clean. Worked out from the ticket history on your machine, no AI. They need 5 finished runs
+  like it; until then there is no estimate. While a lane runs, the page and the card show elapsed
+  time against it and the spend so far (`≈` when the time since the last reported turn is
+  estimated at your usual $/min; Codex and Cursor report no cost, so only time).
+- **Ask before starting**: with an estimate over 30 min or $3, a sensitive label (security,
+  protocol, auth, payment…) or a budget that may not fit, Start asks first. The checkbox in
+  "Before you start" turns it off for your browser.
+- **Instructions while it runs**: "Tell the agent" queues your instruction and sends it to the
+  same session as soon as the run comes back. Cancel it from the same box.
 - **Update from main**: every 15 minutes metwo checks which branches are behind main and whether
   merging would conflict. Update merges main in (no force push), re-runs the gates and pushes.
 - **Board filters**: labels in Linear's own colors, quick fixes, autopilot and has-PR; the filter
@@ -260,6 +266,15 @@ Screenshots are attached the way you would: metwo's own Chrome profile (`data/gi
 drops them into the PR comment box and reads the links back without posting. Sign it in once
 from Settings → Integrations or `/ghlogin`. Signed out, images go to a secret gist.
 
+## Today and the assistant
+
+The assistant works only through the app's own actions (take, start, review, visual check, QA on
+preview, update from main, address comments, resume, triage). It answers from your tickets, PRs,
+reviews and the cycle, shows the ones it means as cards, and proposes a plan you tick and run. It
+never pushes, merges, marks a PR ready or posts anything. Triage runs when you press Triage, or by itself a few times a day with Settings → General →
+*Triage the cycle by itself* (`triage.auto`); only new or edited issues are read, and its cost
+counts in the budget.
+
 ## Autopilot
 
 Off by default; Settings → General or `/autopilot on`. Small tickets (a quick UI fix, a
@@ -298,6 +313,7 @@ Engines. Setup for each CLI: [docs/engines.md](docs/engines.md).
 | `/update WEB-123` | merge main in, push if green |
 | `/review <PR link>`, or paste a PR link | review a teammate's PR |
 | `/preview WEB-123` | QA round on the PR's preview deploy (you post it) |
+| `/today`, `/ask …` (or just write a question) | what needs you, and plain-words questions with a plan you approve |
 | `/desc WEB-123` | tick the PR description checklists from the latest work (you approve) |
 | `/ready`, `/qa`, `/done` | PR out of draft, Linear to QA or Done |
 | `/autopilot on\|off`, `/budget`, `/effort`, `/lanes 4` | settings |
@@ -356,4 +372,3 @@ docs/engines.md  other engines, roles and plan first
 ```
 
 The package and folder names say `ticketflow`; everything you see says metwo.
-# metwo

@@ -1,11 +1,12 @@
 import type { Health, Ticket } from '@ticketflow/shared'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Activity } from './components/Activity.js'
 import { Board } from './components/Board.js'
 import { CommandPalette, openPalette } from './components/CommandPalette.js'
 import { CycleSheet, openCycle } from './components/Cycle.js'
 import { SettingsPage } from './components/Settings.js'
+import { TodayPage } from './components/Today.js'
 import { StatusBar } from './components/StatusBar.js'
 import { Home } from './components/Home.js'
 import { LearningsPage } from './components/LearningsPage.js'
@@ -16,6 +17,7 @@ import { TicketView } from './components/TicketView.js'
 import { Toasts } from './components/Toasts.js'
 import { Button, Count, Dot } from './components/ui.js'
 import { controls, useDaemon, useHealth } from './lib/api.js'
+import { setTickets } from './lib/estimates.js'
 import { href, type Route, useRoute } from './lib/route.js'
 import { desktop, isDesktop } from './lib/tauri.js'
 
@@ -27,10 +29,18 @@ const PAGE = {
 } as const
 
 export function App() {
-  const { state, live, connected, unauthorized } = useDaemon()
+  const { state, live, connected, unauthorized, reload } = useDaemon()
+  // bumping it remounts the board, which drops cards stuck mid-animation after the window was hidden
+  const [epoch, setEpoch] = useState(0)
+  useEffect(() => {
+    const onVisible = () => document.visibilityState === 'visible' && setEpoch((e) => e + 1)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
   const { health, refresh } = useHealth()
   const route = useRoute()
-  const tickets: readonly Ticket[] = state ? Object.values(state.tickets) : []
+  const tickets: readonly Ticket[] = useMemo(() => (state ? Object.values(state.tickets) : []), [state])
+  useEffect(() => setTickets(tickets), [tickets])
   const reviews = state ? Object.values(state.reviews ?? {}).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt)) : []
   const toReview = reviewsWaiting(reviews)
 
@@ -52,6 +62,8 @@ export function App() {
               <LearningsPage />
             ) : !state ? (
               <Offline connected={connected} unauthorized={unauthorized} />
+            ) : route.page === 'today' ? (
+              <TodayPage tickets={tickets} reviews={reviews} />
             ) : route.page === 'home' ? (
               <Home tickets={tickets} health={health} reviews={reviews} />
             ) : route.page === 'reviews' ? (
@@ -69,7 +81,7 @@ export function App() {
               )
             ) : route.page === 'ticket' ? (
               state.tickets[route.id] ? (
-                <TicketView ticket={state.tickets[route.id] as Ticket} live={live[route.id] ?? []} {...(health?.lanes.models ? { models: health.lanes.models } : {})} engines={health?.lanes.engines ?? []} />
+                <TicketView ticket={state.tickets[route.id] as Ticket} live={live[route.id] ?? []} {...(health?.lanes.models ? { models: health.lanes.models } : {})} engines={health?.lanes.engines ?? []} budget={health?.lanes.budget} />
               ) : (
                 <div className="p-6 text-muted">
                   {route.id} is not tracked.{' '}
@@ -80,7 +92,16 @@ export function App() {
               )
             ) : (
               <>
-                <Board tickets={tickets} live={live} />
+                <Board
+                  key={epoch}
+                  tickets={tickets}
+                  live={live}
+                  onRefresh={async () => {
+                    await controls.refresh().catch(() => undefined)
+                    await reload()
+                    setEpoch((e) => e + 1)
+                  }}
+                />
                 <Activity tickets={tickets} />
               </>
             )}
@@ -133,7 +154,7 @@ function Header({
         <Logo className="h-[17px] w-auto" busy={working > 0} />
       </a>
       <nav className="flex gap-1 text-xs max-md:hidden">
-        {(['home', 'board', 'reviews', 'learnings', 'settings'] as const).map((page) => {
+        {(['home', 'today', 'board', 'reviews', 'learnings', 'settings'] as const).map((page) => {
           const active = page === 'board' ? route.page === 'board' || route.page === 'ticket' : page === 'reviews' ? route.page === 'reviews' || route.page === 'review' : route.page === page
           return (
             <a key={page} href={page === 'settings' ? href.settings() : href[page]} className={`relative rounded px-2 py-1 ${active ? 'text-fg' : 'text-muted hover:text-fg'}`}>
@@ -186,6 +207,7 @@ function Header({
 function BottomNav({ route, waiting, toReview }: { route: Route; waiting: number; toReview: number }) {
   const items = [
     { key: 'home', label: 'Home', to: href.home, active: route.page === 'home' },
+    { key: 'today', label: 'Today', to: href.today, active: route.page === 'today' },
     { key: 'board', label: 'Board', to: href.board, active: route.page === 'board' || route.page === 'ticket' },
     { key: 'reviews', label: 'Reviews', to: href.reviews, active: route.page === 'reviews' || route.page === 'review' },
     { key: 'learnings', label: 'Learnings', to: href.learnings, active: route.page === 'learnings' },

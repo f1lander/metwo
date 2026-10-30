@@ -1,9 +1,10 @@
 import type { CycleIssue, CycleView } from '@ticketflow/shared'
 import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useState } from 'react'
-import { assignToMe, loadCycle } from '../lib/api.js'
+import { loadCycle, runAssist, triageNow } from '../lib/api.js'
+import { useTriage, useTriageMap } from '../lib/triage.js'
 import { desktop } from '../lib/tauri.js'
-import { Button, Label, Pill } from './ui.js'
+import { Button, Label, Pill, TriageChip } from './ui.js'
 
 export const openCycle = () => window.dispatchEvent(new Event('metwo:cycle'))
 
@@ -46,9 +47,12 @@ export function CycleSheet() {
   const take = async (ids: readonly string[]) => {
     setBusy(true)
     try {
-      const r = await assignToMe(ids)
-      setNote([r.assigned.length ? `Assigned to you: ${r.assigned.join(', ')}. They are on the board now.` : '', ...r.failed.map((f) => `${f.id}: ${f.error}`)].filter(Boolean).join(' '))
-      setView((v) => (v ? { ...v, issues: v.issues.filter((i) => !r.assigned.includes(i.id)) } : v))
+      // through the assistant's take: assigns, and easy ones start on autopilot when it is on
+      const { results } = await runAssist([{ type: 'take', ids: [...ids] }])
+      const r = results[0]
+      setNote(r ? (r.ok ? `${r.text}. They are on the board now.` : r.text) : '')
+      const taken = r?.ok ? ids.filter((id) => r.text.includes(id)) : []
+      setView((v) => (v ? { ...v, issues: v.issues.filter((i) => !taken.includes(i.id)) } : v))
       setPicked(new Set())
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e))
@@ -65,7 +69,11 @@ export function CycleSheet() {
       return next
     })
 
-  const issues = view?.issues ?? []
+  const triage = useTriageMap()
+  const order = (i: CycleIssue) => (triage[i.id]?.easy ? 0 : triage[i.id] ? 1 : 2)
+  const issues = [...(view?.issues ?? [])].sort((a, b) => order(a) - order(b))
+  const easy = issues.filter((i) => triage[i.id]?.easy)
+  const untriaged = issues.filter((i) => !triage[i.id]).length
   return (
     <AnimatePresence>
       {open && (
@@ -85,7 +93,15 @@ export function CycleSheet() {
                 <div className="text-sm font-medium">{view?.cycle ? view.cycle.name : 'Current cycle'}</div>
                 <div className="text-xs text-muted">{view?.cycle ? `${issues.length} unassigned · ends ${new Date(view.cycle.endsAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : view ? 'No active cycle for the team' : error ? 'Could not load the cycle' : 'Loading…'}</div>
               </div>
-              <button type="button" className="ml-auto text-xs text-muted hover:text-fg" onClick={() => void refresh()}>
+              {easy.length > 0 && (
+                <button type="button" className="ml-auto rounded-full border border-[#27463a] bg-[#16281f] px-2.5 py-0.5 text-xs text-ok hover:brightness-125" onClick={() => setPicked(new Set(easy.map((i) => i.id)))}>
+                  Pick the {easy.length} easy one{easy.length === 1 ? '' : 's'}
+                </button>
+              )}
+              <button type="button" className={`${easy.length ? '' : 'ml-auto '}text-xs text-muted hover:text-fg`} onClick={() => void triageNow(untriaged === 0).then(() => setNote('Triaging with AI… sizes appear as they come in.'))}>
+                {untriaged ? `Triage ${untriaged}` : 'Re-triage'}
+              </button>
+              <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => void refresh()}>
                 Refresh
               </button>
               <button type="button" aria-label="close" className="text-muted hover:text-fg" onClick={() => setOpen(false)}>
@@ -128,6 +144,7 @@ export function CycleSheet() {
 }
 
 function Row({ issue: i, picked, busy, onToggle, onTake }: { issue: CycleIssue; picked: boolean; busy: boolean; onToggle: () => void; onTake: () => void }) {
+  const triage = useTriage(i.id)
   return (
     <motion.div layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, x: 40, height: 0, transition: { duration: 0.25 } }} className={`group flex items-start gap-3 px-4 py-2.5 ${picked ? 'bg-raised' : 'hover:bg-raised/60'}`}>
       <input type="checkbox" checked={picked} onChange={onToggle} aria-label={`select ${i.id}`} className="mt-1 size-3.5 shrink-0 accent-[var(--color-accent)]" />
@@ -140,8 +157,10 @@ function Row({ issue: i, picked, busy, onToggle, onTake }: { issue: CycleIssue; 
           {i.labels.slice(0, 3).map((l) => (
             <Label key={l} name={l} />
           ))}
+          <TriageChip triage={triage} />
         </div>
         <div className="mt-0.5 text-[13px] leading-snug">{i.title}</div>
+        {triage?.why && <div className="mt-0.5 text-[11px] leading-snug text-dim">{triage.why}</div>}
       </button>
       <div className="flex shrink-0 items-center gap-2 opacity-70 group-hover:opacity-100 max-md:opacity-100">
         <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => void desktop.open(i.url)}>

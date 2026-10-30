@@ -209,6 +209,9 @@ function General({ health, view, busy, run, save, reset }: { health: Health; vie
         <Row label="Tickets per day" hint="After this many, new small tickets wait for you." changed={has(o.autopilot, 'maxPerDay')} onReset={() => reset('autopilot.maxPerDay')}>
           <NumberField label="tickets per day" value={ap.maxPerDay} min={1} onSave={(v) => v && save({ autopilot: { maxPerDay: Math.round(v) } })} />
         </Row>
+        <Row label="Triage the cycle by itself" hint="AI sizes new and edited cycle issues a few times a day. Off: only when you press Triage. Each run counts in the budget." changed={has(view.overrides, 'triage')} onReset={() => reset('triage')}>
+          <Toggle label="auto triage" on={view.effective.triage?.auto ?? false} onChange={(v) => save({ triage: { auto: v } })} />
+        </Row>
       </Panel>
 
       <Panel title="Lanes" hint={`${health.lanes.active.length} of ${health.lanes.max} running${health.lanes.active.length ? `: ${health.lanes.active.join(', ')}` : ''}${health.lanes.paused ? ' · paused' : ''}`}>

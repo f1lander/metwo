@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import type { DaemonState, JournalEntry, PrReview, Settings, Ticket, TicketEvent } from '@ticketflow/shared'
+import type { DaemonState, JournalEntry, PrReview, Settings, Ticket, TicketEvent, Triage } from '@ticketflow/shared'
 
 // JSON file state. Good enough for one dev and a few dozen tickets; swap for sqlite later.
 export class Store extends EventEmitter {
@@ -78,6 +78,18 @@ export class Store extends EventEmitter {
     if (!current) throw new Error(`unknown review ${id}`)
     const journal = note ? [...(current.journal ?? []), { ...note, at: new Date().toISOString() }] : current.journal
     return this.putReview({ ...current, ...changes, ...(journal ? { journal } : {}) })
+  }
+
+  spend(what: string, cost: number): void {
+    const list = [...(this.state.spend ?? []), { at: new Date().toISOString(), what, cost: Number(cost.toFixed(4)) }].slice(-1000)
+    this.state = { ...this.state, spend: list }
+    this.persist()
+  }
+
+  setTriage(entries: Readonly<Record<string, Triage>>): void {
+    this.state = { ...this.state, triage: { ...(this.state.triage ?? {}), ...entries } }
+    this.persist()
+    this.emit('triage', this.state.triage)
   }
 
   // Label colors as Linear has them; only emitted when something new shows up.

@@ -37,6 +37,8 @@ export const COMMANDS = [
   { command: 'greptile', description: '/greptile WEB-123 · ask Greptile for a new review' },
   { command: 'ready', description: '/ready WEB-123 · take the PR out of draft for review' },
   { command: 'ghlogin', description: 'sign metwo’s browser into GitHub (opens on the Mac)' },
+  { command: 'today', description: 'what needs you, PRs to review, and what to pick from the cycle' },
+  { command: 'ask', description: '/ask anything about your tickets, PRs and the cycle; it can plan actions you approve' },
   { command: 'preview', description: '/preview WEB-123 · QA round on the PR preview deploy (you post it)' },
   { command: 'qa', description: '/qa WEB-123 · move to QA in Linear (posts the hand-off)' },
   { command: 'done', description: '/done WEB-123 · move to Done in Linear' },

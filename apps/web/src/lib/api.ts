@@ -1,6 +1,7 @@
-import type { CycleView, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrReview, PrView, LiveLine, ServerEvent, Settings, SettingsView, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
+import type { AskReply, AssistAction, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrReview, PrView, LiveLine, ServerEvent, Settings, SettingsView, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
 import { useCallback, useEffect, useState } from 'react'
 import { setLabelColors } from './labels.js'
+import { setTriage } from './triage.js'
 import { isDesktop } from './tauri.js'
 
 // Served by the daemon: same origin. Inside the desktop shell: the daemon on localhost.
@@ -17,6 +18,8 @@ export interface DaemonFeed {
   readonly mode: 'stream' | 'poll'
   // the daemon answered 401: the cookie for this tunnel URL is missing or stale
   readonly unauthorized: boolean
+  // fetch the whole state again (the Refresh button, coming back to the window)
+  readonly reload: () => Promise<void>
 }
 
 // Cloudflare quick tunnels do not carry server-sent events, so there the board polls.
@@ -67,8 +70,10 @@ export function useDaemon(): DaemonFeed {
         if (event.type === 'snapshot') {
           setState(event.state)
           setLabelColors(event.state.labelColors)
+          setTriage(event.state.triage)
         }
         if (event.type === 'labels') setLabelColors(event.labelColors)
+        if (event.type === 'triage') setTriage(event.triage)
         if (event.type === 'ticket') {
           setState((prev) => (prev ? { ...prev, tickets: { ...prev.tickets, [event.ticket.id]: event.ticket } } : prev))
         }
@@ -102,6 +107,7 @@ export function useDaemon(): DaemonFeed {
           const next = (await res.json()) as DaemonState
           setState(next)
           setLabelColors(next.labelColors)
+          setTriage(next.triage)
           setConnected(true)
           setUnauthorized(false)
           const lr = await fetch(`${API}/api/live?since=${encodeURIComponent(since)}`, { cache: 'no-store' })
@@ -132,7 +138,29 @@ export function useDaemon(): DaemonFeed {
     }
   }, [mode, addLines])
 
-  return { state, live, connected, mode, unauthorized }
+  const reload = useCallback(async () => {
+    const res = await fetch(`${API}/api/state`, { cache: 'no-store' })
+    if (!res.ok) throw new Error(`the daemon answered ${res.status}`)
+    const next = (await res.json()) as DaemonState
+    setState(next)
+    setLabelColors(next.labelColors)
+    setTriage(next.triage)
+  }, [])
+
+  // after sleep or a hidden window the stream may have missed events: take a fresh copy
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void reload().catch(() => undefined)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [reload])
+
+  return { state, live, connected, mode, unauthorized, reload }
 }
 
 export function useHealth(intervalMs = 10_000): { readonly health: Health | null; readonly refresh: () => Promise<void> } {
@@ -182,6 +210,10 @@ export const learningActions = {
   remove: (rule: string) => post('/api/learnings/remove', { rule }),
 }
 export const loadSettings = () => getJson<SettingsView>('/api/settings')
+export const loadToday = () => getJson<TodayItem[]>('/api/today')
+export const askMetwo = (question: string, history: { role: 'you' | 'metwo'; text: string }[]) => post<AskReply>('/api/ask', { question, history })
+export const runAssist = (actions: AssistAction[]) => post<{ results: { action: AssistAction; ok: boolean; text: string }[] }>('/api/assist/run', { actions })
+export const triageNow = (force = false) => post('/api/triage', { force })
 export const loadCycle = () => getJson<CycleView>('/api/linear/cycle')
 export const assignToMe = (ids: readonly string[]) => post<{ assigned: string[]; failed: { id: string; error: string }[] }>('/api/linear/assign', { ids })
 export const loadPrView = (id: string) => getJson<PrView>(`/api/tickets/${id}/pr-view`)
@@ -228,7 +260,9 @@ export const actions = {
   descApply: (t: Ticket, input: { accept: string[]; comment: string | null; log: string }) => post<{ url: string | null; applied: number; skipped: number }>(`/api/tickets/${t.id}/pr-desc/apply`, input),
   descDiscard: (t: Ticket) => post(`/api/tickets/${t.id}/pr-desc/discard`),
   visualOverride: (t: Ticket, value: 'on' | 'off' | null) => post(`/api/tickets/${t.id}/visual/override`, { value }),
-  instruct: (t: Ticket, text: string, images: readonly { name: string; data: string }[]) => post(`/api/tickets/${t.id}/instruct`, { text, images }),
+  instruct: (t: Ticket, text: string, images: readonly { name: string; data: string }[]) => post<{ ok: boolean; queued?: boolean }>(`/api/tickets/${t.id}/instruct`, { text, images }),
+  cancelQueued: (t: Ticket) => post(`/api/tickets/${t.id}/instruct/cancel`),
+  pauseAfter: (t: Ticket, on: boolean) => post(`/api/tickets/${t.id}/pause-after`, { on }),
   ready: (t: Ticket) => post<{ reviewers: string[] }>(`/api/tickets/${t.id}/ready`),
   fixGreptile: (t: Ticket) => post(`/api/tickets/${t.id}/greptile-fix`),
   openEditor: (t: Ticket) => post<{ editor: string }>(`/api/tickets/${t.id}/open-editor`),
@@ -250,6 +284,7 @@ export const controls = {
   pause: () => post('/api/control/pause'),
   resume: () => post('/api/control/resume'),
   poll: () => post('/api/control/poll'),
+  refresh: () => post('/api/control/refresh'),
   probe: () => post<Health>('/api/control/probe'),
   restartBot: () => post<Health>('/api/control/restart-bot'),
   testEngine: (id: string) => post<{ ok: boolean; text: string; model: string | null; seconds: number; detail: string }>(`/api/engines/${id}/test`),
