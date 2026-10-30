@@ -10,6 +10,10 @@
   Linear · Telegram · git worktrees · Claude Code / Codex / Cursor / OpenCode / Hermes · Playwright · GitHub
 </p>
 
+<p align="center">
+  <img src="docs/metwo-demo.gif" alt="metwo demo" width="100%">
+</p>
+
 ---
 
 A ticket gets assigned to you. metwo tells you on Telegram and puts it on the board. You pick a
