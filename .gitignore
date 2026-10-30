@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+data/
+*.log
+.DS_Store
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+learnings/.work/
+# your own paths; start from ticketflow.config.example.json
+ticketflow.config.json

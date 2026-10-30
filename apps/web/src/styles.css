@@ -1,0 +1,145 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: Inter, system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-bg: #0f1012;
+  --color-sunk: #0b0c0e;
+  --color-panel: #17181b;
+  --color-raised: #1c1d21;
+  --color-line: #26272b;
+  --color-line-2: #2e2f34;
+  --color-fg: #e3e4e6;
+  --color-fg-2: #c9ccd1;
+  --color-muted: #8a8f98;
+  --color-dim: #5c6069;
+  --color-accent: #7c5cff;
+  --color-accent-fg: #a08bff;
+  --color-ok: #6fd19d;
+  --color-ok-dot: #4cb782;
+  --color-warn: #f2c94c;
+  --color-bad: #f08c8c;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg text-fg font-sans text-[13px] antialiased;
+  }
+  ::selection {
+    background: #7c5cff55;
+  }
+}
+
+@keyframes pulse-line {
+  50% {
+    border-top-color: var(--color-line-2);
+  }
+}
+.step-active {
+  animation: pulse-line 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .step-active {
+    animation: none;
+  }
+}
+
+/* rendered markdown from Linear and GitHub */
+.md {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--color-fg-2);
+  overflow-wrap: anywhere;
+}
+.md > * + * {
+  margin-top: 0.7em;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  color: var(--color-fg);
+  font-weight: 600;
+  margin-top: 1.2em;
+}
+.md h1 {
+  font-size: 16px;
+}
+.md h2 {
+  font-size: 14px;
+}
+.md h3,
+.md h4 {
+  font-size: 13px;
+}
+.md a {
+  color: var(--color-accent-fg);
+}
+.md a:hover {
+  text-decoration: underline;
+}
+.md ul {
+  list-style: disc;
+  padding-left: 1.3em;
+}
+.md ol {
+  list-style: decimal;
+  padding-left: 1.3em;
+}
+.md li + li {
+  margin-top: 0.25em;
+}
+.md code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: var(--color-raised);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.md pre {
+  background: var(--color-sunk);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.md pre code {
+  background: none;
+  padding: 0;
+}
+.md blockquote {
+  border-left: 2px solid var(--color-line-2);
+  padding-left: 12px;
+  color: var(--color-muted);
+}
+.md img,
+.md video {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--color-line);
+}
+.md table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.md th,
+.md td {
+  border: 1px solid var(--color-line);
+  padding: 4px 8px;
+}
+.md hr {
+  border-color: var(--color-line);
+}
+.md details summary {
+  cursor: pointer;
+  color: var(--color-muted);
+}
+.md > :first-child {
+  margin-top: 0;
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@ticketflow/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:app": "tauri build --bundles app",
+    "icon": "tauri icon icon.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.5.0"
+  }
+}
