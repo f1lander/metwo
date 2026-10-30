@@ -15,7 +15,9 @@
 </p>
 
 
-https://github.com/user-attachments/assets/053e967d-fba6-43d8-a78b-bd4ff07b7c35
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/053e967d-fba6-43d8-a78b-bd4ff07b7c35" width="100%" controls muted playsinline></video>
+</p>
 ---
 
 A ticket gets assigned to you. metwo tells you on Telegram and puts it on the board. You pick a
