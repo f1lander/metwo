@@ -27,8 +27,18 @@
       prov.__mevo = true
     } catch {}
   }
-  window.addEventListener('eip6963:announceProvider', (e) => wrap(e.detail?.provider))
-  setInterval(() => wrap(window.ethereum), 500)
+  // wallets announce once on load, often before this runs: ask them again
+  window.__mevoProviders = []
+  const keep = (prov) => {
+    wrap(prov)
+    if (prov && !window.__mevoProviders.includes(prov)) window.__mevoProviders.push(prov)
+  }
+  window.addEventListener('eip6963:announceProvider', (e) => keep(e.detail?.provider))
+  try {
+    window.dispatchEvent(new Event('eip6963:requestProvider'))
+  } catch {}
+  keep(window.ethereum)
+  setInterval(() => keep(window.ethereum), 500)
 
   // copies
   try {

@@ -492,7 +492,7 @@ export class ChromeRun {
   private walletSeen(step: TestStep): string | null {
     const v = step.check.value ?? ''
     if (step.check.kind === 'rpc') {
-      const hit = this.rpc.find((r) => r.t >= this.since && r.method === v && !r.error && (r.method !== 'eth_requestAccounts' || (Array.isArray(r.result) && r.result.length > 0)))
+      const hit = this.rpc.find((r) => r.t >= this.since && !r.error && (v === 'eth_requestAccounts' ? (r.method === v || r.method === 'eth_accounts') && Array.isArray(r.result) && r.result.length > 0 : r.method === v))
       return hit ? `${hit.method} → ${JSON.stringify(hit.result).slice(0, 120)}` : null
     }
     if (step.check.kind === 'tx') {

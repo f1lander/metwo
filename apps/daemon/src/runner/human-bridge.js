@@ -4,9 +4,14 @@
 ;(() => {
   if (window.__mevoBridge) return
   window.__mevoBridge = true
+  let state = null
+  let reported = null
+  let soon = null
   const post = (e) => {
     try {
-      fetch('/__mevo/event', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(e), keepalive: true }).catch(() => {})
+      fetch('/__mevo/event', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(e), keepalive: true })
+        .then(() => tick())
+        .catch(() => {})
     } catch {}
   }
   window.__mevoRpc = (e) => post({ type: 'rpc', ...e })
@@ -37,23 +42,64 @@
     }
     return null
   }
-  let reported = null
+  // a wallet that is already connected never asks for accounts again: ask it (no prompt)
+  let asking = false
+  let asked = 0
+  const connected = async () => {
+    if (asking || Date.now() - asked < 800) return
+    asking = true
+    asked = Date.now()
+    try {
+      for (const p of [window.ethereum, ...(window.__mevoProviders ?? [])]) {
+        const a = p?.request ? await p.request({ method: 'eth_accounts' }).catch(() => null) : null
+        if (Array.isArray(a) && a.length) return
+      }
+    } finally {
+      asking = false
+    }
+  }
+  const check = () => {
+    const step = state?.steps.find((x) => x.id === state.current)
+    if (!step || reported === step.id) return
+    if (step.check?.kind === 'rpc' && step.check.value === 'eth_requestAccounts') return void connected()
+    const hit = seen(step)
+    if (hit) {
+      reported = step.id
+      post({ type: 'seen', id: step.id, detail: String(hit).slice(0, 300) })
+    }
+  }
+  let busy = false
   const tick = async () => {
+    if (busy) return
+    busy = true
     try {
       const r = await fetch(`/__mevo/state?url=${encodeURIComponent(location.href)}`, { cache: 'no-store' })
-      const s = await r.json()
-      window.__mevoRender?.(s)
-      const step = s.steps.find((x) => x.id === s.current)
-      if (step && reported !== step.id) {
-        const hit = seen(step)
-        if (hit) {
-          reported = step.id
-          post({ type: 'seen', id: step.id, detail: String(hit).slice(0, 300) })
-        }
-      }
-    } catch {}
+      state = await r.json()
+      window.__mevoRender?.(state)
+      check()
+    } catch {
+    } finally {
+      busy = false
+    }
   }
-  setInterval(tick, 1000)
+  // check as soon as the page changes, not only on the poll
+  const later = () => {
+    clearTimeout(soon)
+    soon = setTimeout(check, 120)
+  }
+  new MutationObserver((m) => {
+    if (m.some((x) => !(x.target instanceof Element && x.target.closest?.('mevo-test')))) later()
+  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'open'] })
+  for (const k of ['pushState', 'replaceState']) {
+    const orig = history[k]
+    history[k] = function (...a) {
+      const r = orig.apply(this, a)
+      later()
+      return r
+    }
+  }
+  window.addEventListener('popstate', later)
+  setInterval(tick, 500)
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tick, { once: true })
   else tick()
 })()
