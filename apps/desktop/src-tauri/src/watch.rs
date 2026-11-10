@@ -50,7 +50,7 @@ pub fn start<R: Runtime>(app: AppHandle<R>, tray_id: &'static str) {
             if title != last_title {
                 if let Some(tray) = app.tray_by_id(tray_id) {
                     let _ = tray.set_title(Some(&title));
-                    let tip = if title == "○" { "metwo · daemon not running".to_string() } else { format!("metwo · {title}") };
+                    let tip = if title == "○" { "mevo · daemon not running".to_string() } else { format!("mevo · {title}") };
                     let _ = tray.set_tooltip(Some(&tip));
                 }
                 last_title = title;

@@ -16,6 +16,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const PORT: u16 = 4747;
 const MAX_LOG_LINES: usize = 600;
 
+pub const RESTART_CODE: i32 = 75;
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DaemonStatus {
@@ -56,7 +58,7 @@ impl Daemon {
             if let Ok(Some(exit)) = child.try_wait() {
                 inner.exit_code = exit.code();
                 inner.child = None;
-                self.log(&format!("[metwo] daemon exited ({})", exit));
+                self.log(&format!("[mevo] daemon exited ({})", exit));
             }
         }
         let own = inner.child.as_ref().map(|c| c.id());
@@ -77,7 +79,7 @@ impl Daemon {
             return Ok(current);
         }
         if !self.root.join("package.json").exists() {
-            return Err(format!("metwo: project not found at {} (set METWO_ROOT)", self.root.display()));
+            return Err(format!("mevo: project not found at {} (set METWO_ROOT)", self.root.display()));
         }
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
         // -i too: nvm and friends usually live in .zshrc, which a plain login shell skips
@@ -86,6 +88,8 @@ impl Daemon {
             .args(["-lic", &cmd])
             .current_dir(&self.root)
             .env("FORCE_COLOR", "0")
+            // tells the daemon it may exit with RESTART_CODE to pick up new code: we start it again
+            .env("METWO_SUPERVISED", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -99,7 +103,7 @@ impl Daemon {
         if let Some(err) = child.stderr.take() {
             self.pipe(err, "");
         }
-        self.log(&format!("[metwo] started daemon pid {} in {}", child.id(), self.root.display()));
+        self.log(&format!("[mevo] started daemon pid {} in {}", child.id(), self.root.display()));
         let mut inner = self.inner.lock().unwrap();
         inner.child = Some(child);
         inner.started_at = Some(now_iso());
@@ -114,7 +118,7 @@ impl Daemon {
         let owned = child.is_some();
         if let Some(mut child) = child {
             let pgid = child.id() as i32;
-            self.log("[metwo] stopping daemon");
+            self.log("[mevo] stopping daemon");
             // SIGTERM the whole group (daemon, its lanes, cloudflared), escalate if needed.
             unsafe { libc::kill(-pgid, libc::SIGTERM) };
             let deadline = Instant::now() + Duration::from_secs(6);
@@ -139,6 +143,23 @@ impl Daemon {
             thread::sleep(Duration::from_millis(150));
         }
         self.status()
+    }
+
+    // The daemon exits with RESTART_CODE when its code changed on disk and nothing is running;
+    // this brings it straight back up on the new code.
+    pub fn supervise(&self) {
+        let me = self.clone();
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(2));
+            let s = me.status();
+            if !s.running && s.exit_code == Some(RESTART_CODE) {
+                me.log("[mevo] the daemon restarted to load new code");
+                if let Err(e) = me.start() {
+                    me.log(&format!("[mevo] could not start it again: {e}"));
+                    me.inner.lock().unwrap().exit_code = None;
+                }
+            }
+        });
     }
 
     pub fn restart(&self) -> Result<DaemonStatus, String> {
@@ -294,6 +315,30 @@ mod tests {
         assert!(port_open(), "external daemon must survive stop()");
         assert!(t.elapsed() < Duration::from_secs(1), "stop() must not wait on a port it does not own");
         outside.kill().ok();
+        let _ = outside.wait();
         let _ = std::process::Command::new("pkill").args(["-f", "sleep 300"]).status();
+
+        // exit code 75 (new code on disk): supervise() starts it again; it boots fine the second time
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while port_open() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(100));
+        }
+        std::fs::write(
+            dir.join("server.cjs"),
+            "const fs=require('fs');\
+             if(!fs.existsSync('booted')){fs.writeFileSync('booted','1');console.log('restart please');process.exit(75)}\
+             require('http').createServer((q,r)=>r.end('ok')).listen(4747,()=>console.log('daemon up again'))",
+        )
+        .unwrap();
+        let _ = std::fs::remove_file(dir.join("booted"));
+        d.supervise();
+        d.start().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !port_open() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(200));
+        }
+        assert!(port_open(), "supervise() should start it again after 75; logs: {:?}", d.logs());
+        assert!(d.logs().iter().any(|l| l.contains("restarted to load new code")), "{:?}", d.logs());
+        d.stop();
     }
 }

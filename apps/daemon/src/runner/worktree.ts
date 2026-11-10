@@ -48,3 +48,17 @@ export async function hasUncommitted(wt: Worktree): Promise<boolean> {
   const out = await git(['status', '--porcelain', '--untracked-files=no'], wt.path)
   return out.trim().length > 0
 }
+
+// Commits here that the PR's head on GitHub doesn't have, newest first (merges counted, not listed)
+export async function unpushedSince(worktree: string, headSha: string): Promise<{ count: number; commits: { sha: string; subject: string }[]; at: string }> {
+  const count = Number(await git(['rev-list', '--count', `${headSha}..HEAD`], worktree)) || 0
+  const log = count ? await git(['log', '--no-merges', '-n', '20', '--format=%h%x09%s', `${headSha}..HEAD`], worktree) : ''
+  const commits = log
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => {
+      const [sha = '', ...rest] = l.split('\t')
+      return { sha, subject: rest.join('\t') }
+    })
+  return { count, commits, at: new Date().toISOString() }
+}

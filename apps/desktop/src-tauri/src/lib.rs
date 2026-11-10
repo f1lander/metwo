@@ -50,16 +50,18 @@ fn daemon_logs(daemon: State<'_, Daemon>) -> Vec<String> {
 fn set_tray_title(app: AppHandle, title: String) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_title(Some(&title));
-        let _ = tray.set_tooltip(Some(&format!("metwo · {title}")));
+        let _ = tray.set_tooltip(Some(&format!("mevo · {title}")));
     }
 }
 
 // URLs, folders and the dev server, via the system handler.
 #[tauri::command]
 fn open_external(target: String) -> Result<(), String> {
-    let allowed = target.starts_with("http://") || target.starts_with("https://") || target.starts_with('/');
-    if !allowed {
-        return Err("only urls and absolute paths".into());
+    // web links, or a folder to show in Finder (a worktree); never an app or a file to run
+    let is_url = target.starts_with("http://") || target.starts_with("https://");
+    let is_folder = target.starts_with('/') && std::path::Path::new(&target).is_dir() && !target.trim_end_matches('/').ends_with(".app");
+    if !is_url && !is_folder {
+        return Err("only web links and folders".into());
     }
     let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
     Command::new(opener).arg(&target).spawn().map(|_| ()).map_err(|e| e.to_string())
@@ -93,13 +95,13 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let pause = MenuItem::with_id(app, "pause", "Pause lanes", true, None::<&str>)?;
     let resume = MenuItem::with_id(app, "resume", "Resume lanes", true, None::<&str>)?;
     let poll = MenuItem::with_id(app, "poll", "Poll Linear now", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit metwo", true, Some("CmdOrCtrl+Q"))?;
+    let quit = MenuItem::with_id(app, "quit", "Quit mevo", true, Some("CmdOrCtrl+Q"))?;
     let sep = || PredefinedMenuItem::separator(app);
     let menu = Menu::with_items(app, &[&open, &health, &sep()?, &poll, &pause, &resume, &sep()?, &bot, &restart, &stop, &start, &sep()?, &quit])?;
 
     let builder = TrayIconBuilder::with_id(TRAY_ID)
         .title("")
-        .tooltip("metwo")
+        .tooltip("mevo")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
@@ -156,24 +158,25 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             build_tray(app)?;
             watch::start(app.handle().clone(), TRAY_ID);
-            // The app is the way to run metwo: bring the daemon up unless a terminal already did.
+            // The app is the way to run mevo: bring the daemon up unless a terminal already did.
             let d = daemon.clone();
             std::thread::spawn(move || {
                 if let Err(e) = d.start() {
                     eprintln!("{e}");
                 }
             });
+            daemon.supervise();
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window keeps metwo running in the menu bar.
+            // Closing the window keeps mevo running in the menu bar.
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building metwo");
+        .expect("error while building mevo");
 
     app.run(|app, event| match event {
         RunEvent::ExitRequested { .. } | RunEvent::Exit => {

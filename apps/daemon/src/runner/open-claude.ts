@@ -40,7 +40,7 @@ export async function openTerminal(cwd: string, command: string, name: string, p
     const dir = path.join(os.homedir(), '.warp', 'tab_configs')
     mkdirSync(dir, { recursive: true })
     const stem = `metwo_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
-    writeFileSync(path.join(dir, `${stem}.toml`), `name = ${JSON.stringify(`metwo ${name}`)}\ntitle = ${JSON.stringify(name)}\ncolor = "magenta"\n\n[[panes]]\nid = "main"\ntype = "terminal"\ndirectory = ${JSON.stringify(cwd)}\ncommands = [${JSON.stringify(command)}]\n`)
+    writeFileSync(path.join(dir, `${stem}.toml`), `name = ${JSON.stringify(`mevo ${name}`)}\ntitle = ${JSON.stringify(name)}\ncolor = "magenta"\n\n[[panes]]\nid = "main"\ntype = "terminal"\ndirectory = ${JSON.stringify(cwd)}\ncommands = [${JSON.stringify(command)}]\n`)
     await run('open', [`warp://tab_config/${stem}`])
     return 'Warp'
   }

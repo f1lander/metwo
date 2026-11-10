@@ -1,6 +1,6 @@
 import type { Ticket } from '@ticketflow/shared'
 import { AnimatePresence, motion } from 'motion/react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { actions } from '../lib/api.js'
 import { Button } from './ui.js'
 
@@ -18,14 +18,39 @@ const read = (file: File) =>
   })
 
 // Your own instruction for the lane, with screenshots pasted, dropped or picked.
-export function Instruct({ ticket: t }: { ticket: Ticket }) {
-  const [open, setOpen] = useState(false)
+export function Instruct({ ticket: t, onSent, docked = false, focusKey = 0 }: { ticket: Ticket; onSent?: () => void; docked?: boolean; focusKey?: number }) {
+  const [openState, setOpen] = useState(false)
+  const open = docked || openState
+  const area = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (focusKey) area.current?.focus()
+  }, [focusKey])
   const [text, setText] = useState('')
   const [shots, setShots] = useState<readonly Shot[]>([])
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [over, setOver] = useState(false)
+  // a small change: fresh cheap session, no screenshots or e2e, you check it by hand
+  const [quick, setQuick] = useState(false)
   const picker = useRef<HTMLInputElement>(null)
+  // in the chat: ask (answered from the ticket's history, no lane) or tell the lane; asking by default
+  const [mode, setModeState] = useState<'ask' | 'tell'>(() => {
+    if (!docked) return 'tell'
+    try {
+      return localStorage.getItem('metwo.chatMode') === 'tell' ? 'tell' : 'ask'
+    } catch {
+      return 'ask'
+    }
+  })
+  const setMode = (m: 'ask' | 'tell') => {
+    setModeState(m)
+    try {
+      localStorage.setItem('metwo.chatMode', m)
+    } catch {
+      // private mode: not remembered
+    }
+  }
+  const asking = mode === 'ask'
   const running = t.status === 'running' || t.status === 'queued'
   if (!t.worktree) return null
 
@@ -38,12 +63,27 @@ export function Instruct({ ticket: t }: { ticket: Ticket }) {
   const send = async () => {
     setBusy(true)
     setNote(null)
+    if (asking) {
+      const q = text
+      setText('')
+      try {
+        await actions.ask(t, q)
+        onSent?.()
+      } catch (err) {
+        setText(q)
+        setNote(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
     try {
-      const r = await actions.instruct(t, text, shots)
+      const r = await actions.instruct(t, text, shots, quick && !running)
       setText('')
       setShots([])
       setOpen(false)
       setNote(r.queued ? null : 'Sent. The lane is on it; it comes back to review when done.')
+      onSent?.()
     } catch (err) {
       setNote(err instanceof Error ? err.message : String(err))
     } finally {
@@ -52,7 +92,7 @@ export function Instruct({ ticket: t }: { ticket: Ticket }) {
   }
 
   const queued = t.queuedInstruction
-  if (queued) {
+  if (queued && !asking) {
     return (
       <div className="flex items-start gap-3 rounded-lg border border-accent/40 bg-accent/5 px-3.5 py-2.5">
         <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent/20 text-[13px] text-accent-fg" aria-hidden="true">
@@ -119,29 +159,47 @@ export function Instruct({ ticket: t }: { ticket: Ticket }) {
       onDrop={(e) => {
         e.preventDefault()
         setOver(false)
-        void add([...e.dataTransfer.files])
+        if (!asking) void add([...e.dataTransfer.files])
       }}
     >
-      <label htmlFor={`instruct-${t.id}`} className="text-xs font-medium text-fg">
-        What should change?
+      {docked && (
+        <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-md border border-line-2 p-0.5 text-xs" role="group" aria-label="ask or tell the lane">
+            {(
+              [
+                ['ask', 'Ask'],
+                ['tell', 'Tell the lane'],
+              ] as const
+            ).map(([k, label]) => (
+              <button key={k} type="button" aria-pressed={mode === k} onClick={() => setMode(k)} className={`rounded px-2 py-0.5 ${mode === k ? 'bg-raised text-fg' : 'text-muted hover:text-fg'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="truncate text-[11px] text-dim">{asking ? 'answered from the history: commits, threads, checks. No lane runs.' : running ? 'the lane gets it when this run comes back' : 'the lane makes the change and comes back for review'}</span>
+        </div>
+      )}
+      <label htmlFor={`instruct-${t.id}`} className={docked ? 'sr-only' : 'text-xs font-medium text-fg'}>
+        {asking ? 'Your question' : 'What should change?'}
       </label>
       <textarea
         id={`instruct-${t.id}`}
-        autoFocus
-        rows={3}
+        ref={area}
+        autoFocus={!docked}
+        rows={docked ? 2 : 3}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onPaste={(e) => {
           const files = [...e.clipboardData.files]
-          if (files.length) {
+          if (files.length && !asking) {
             e.preventDefault()
             void add(files)
           }
         }}
         onKeyDown={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && text.trim()) void send()
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && text.trim() && !busy) void send()
         }}
-        placeholder="The title overlaps the back button on the renew screen at mobile width. Keep the title on one line beside the icon."
+        placeholder={docked && asking ? "Was Aaron's comment about the mobile wrap addressed? Which commit fixed the banner? ⌘↵ asks." : docked ? `Tell the agent what to change${running ? " (it waits until this run comes back)" : ""}. Paste or drop screenshots. ⌘↵ sends.` : "The title overlaps the back button on the renew screen at mobile width. Keep the title on one line beside the icon."}
         className="rounded-md border border-line-2 bg-bg px-3 py-2 text-[13px] leading-relaxed outline-none transition-colors focus:border-accent max-md:text-[16px]"
       />
       <AnimatePresence initial={false}>
@@ -159,22 +217,34 @@ export function Instruct({ ticket: t }: { ticket: Ticket }) {
         )}
       </AnimatePresence>
       <div className="flex flex-wrap items-center gap-2">
-        <input ref={picker} type="file" accept="image/*" multiple hidden onChange={(e) => void add([...(e.target.files ?? [])])} />
-        <Button variant="ghost" onClick={() => picker.current?.click()} disabled={shots.length >= 6}>
-          Attach screenshot
-        </Button>
-        <span className="text-[11px] text-dim max-md:hidden">or paste / drop an image · ⌘↵ to send</span>
+        {!asking && (
+          <>
+            <input ref={picker} type="file" accept="image/*" multiple hidden onChange={(e) => void add([...(e.target.files ?? [])])} />
+            <Button variant="ghost" onClick={() => picker.current?.click()} disabled={shots.length >= 6}>
+              Attach screenshot
+            </Button>
+            <span className="text-[11px] text-dim max-md:hidden">or paste / drop an image · ⌘↵ to send</span>
+          </>
+        )}
         <span className="ml-auto flex gap-2">
-          <Button variant="ghost" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
+          {!docked && (
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+          )}
+          {!asking && !running && (
+            <label className="flex items-center gap-1.5 text-xs text-muted" title="for small changes: a fresh session on a cheaper model, no screenshots or e2e; it leaves you what to check by hand">
+              <input type="checkbox" checked={quick} onChange={(e) => setQuick(e.target.checked)} className="accent-[var(--color-accent)]" />
+              Quick fix
+            </label>
+          )}
           <Button variant="primary" disabled={busy || !text.trim()} onClick={() => void send()}>
-            {busy ? 'Sending…' : running ? 'Queue for after this run' : 'Send to the lane'}
+            {asking ? (busy ? 'Asking…' : 'Ask') : busy ? 'Sending…' : running ? 'Queue for after this run' : 'Send to the lane'}
           </Button>
         </span>
       </div>
       {note && <div className="text-xs text-bad">{note}</div>}
-      <p className="text-[11px] leading-relaxed text-dim">The lane reproduces it, fixes it in the worktree, re-checks it visually and comes back for your review. Nothing is pushed.</p>
+      <p className={`text-[11px] leading-relaxed text-dim ${docked ? 'hidden' : ''}`}>The lane reproduces it, fixes it in the worktree, re-checks it visually and comes back for your review. Nothing is pushed.</p>
     </motion.div>
   )
 }

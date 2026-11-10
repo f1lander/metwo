@@ -1,4 +1,4 @@
-import type { AskReply, AssistAction, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrReview, PrView, LiveLine, ServerEvent, Settings, SettingsView, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
+import type { LinearSyncRow, MascotStatus, SlackChannel, AskReply, Nudge, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, OpenPr, ReviewDepth, CiDiagnosis, FindScope, FoundIssue, LinearProject, EngineSetupStatus, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrinciplesUpdate, PrReview, HumanTestRun, PrView, Readiness, LiveLine, TestPlan, TestStep, ServerEvent, Settings, SettingsView, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
 import { useCallback, useEffect, useState } from 'react'
 import { setLabelColors } from './labels.js'
 import { setTriage } from './triage.js'
@@ -65,6 +65,8 @@ export function useDaemon(): DaemonFeed {
         if (failures >= 2) setMode('poll')
         else retry = setTimeout(open, 2000)
       }
+      const pending = new Map<string, Ticket>()
+      let frame: number | null = null
       source.onmessage = (e) => {
         const event = JSON.parse(e.data) as ServerEvent
         if (event.type === 'snapshot') {
@@ -74,8 +76,18 @@ export function useDaemon(): DaemonFeed {
         }
         if (event.type === 'labels') setLabelColors(event.labelColors)
         if (event.type === 'triage') setTriage(event.triage)
+        if (event.type === 'slack') setState((prev) => (prev ? { ...prev, slackMentions: event.mentions } : prev))
+        if (event.type === 'night') setState((prev) => (prev ? { ...prev, nightShift: event.night } : prev))
+        if (event.type === 'mascot') setState((prev) => (prev ? { ...prev, mascot: event.mascot } : prev))
         if (event.type === 'ticket') {
-          setState((prev) => (prev ? { ...prev, tickets: { ...prev.tickets, [event.ticket.id]: event.ticket } } : prev))
+          // several tickets in one frame: one render
+          pending.set(event.ticket.id, event.ticket)
+          frame ??= requestAnimationFrame(() => {
+            frame = null
+            const batch = Object.fromEntries(pending)
+            pending.clear()
+            setState((prev) => (prev ? { ...prev, tickets: { ...prev.tickets, ...batch } } : prev))
+          })
         }
         if (event.type === 'review') {
           setState((prev) => (prev ? { ...prev, reviews: { ...prev.reviews, [event.review.id]: event.review } } : prev))
@@ -201,9 +213,13 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export const loadIssue = (id: string) => getJson<LinearIssueView>(`/api/tickets/${id}/issue`)
+export const loadPrMeta = (kind: 'ticket' | 'review', id: string) => getJson<PrMeta | null>(kind === 'ticket' ? `/api/tickets/${id}/pr-meta` : `/api/reviews/${id}/meta`)
+export const loadLeaderboard = (period: 'week' | 'month', fresh = false) => getJson<Leaderboard>(`/api/leaderboard?period=${period}${fresh ? '&fresh=1' : ''}`)
 export const loadMedia = (id: string) => getJson<MediaFile[]>(`/api/tickets/${id}/media`)
 export const mediaUrl = (id: string, name: string, at?: string) => `${API}/api/tickets/${id}/media/${encodeURIComponent(name)}${at ? `?v=${encodeURIComponent(at)}` : ''}`
 export const loadLearnings = () => getJson<{ lastRunAt: string | null; proposals: LearningProposal[]; rules: string }>('/api/learnings')
+export const loadReviewKnowledge = () => getJson<FixLogView>('/api/knowledge/reviews')
+export const learnReviews = (prs?: number[]) => post<{ queued: number }>('/api/knowledge/reviews/learn', prs ? { prs } : {})
 export const learningActions = {
   run: () => post<{ proposed: number }>('/api/learnings/run'),
   decide: (id: string, approve: boolean, text?: string) => post(`/api/learnings/${id}`, { approve, ...(text ? { text } : {}) }),
@@ -211,11 +227,18 @@ export const learningActions = {
 }
 export const loadSettings = () => getJson<SettingsView>('/api/settings')
 export const loadToday = () => getJson<TodayItem[]>('/api/today')
-export const askMetwo = (question: string, history: { role: 'you' | 'metwo'; text: string }[]) => post<AskReply>('/api/ask', { question, history })
+export const askMetwo = (question: string, history: { role: 'you' | 'mevo'; text: string }[]) => post<AskReply>('/api/ask', { question, history })
 export const runAssist = (actions: AssistAction[]) => post<{ results: { action: AssistAction; ok: boolean; text: string }[] }>('/api/assist/run', { actions })
 export const triageNow = (force = false) => post('/api/triage', { force })
 export const loadCycle = () => getJson<CycleView>('/api/linear/cycle')
+export const findIssues = (scope: FindScope, opts: { q?: string; project?: string; team?: string } = {}) =>
+  getJson<FoundIssue[]>(`/api/linear/find?${new URLSearchParams({ scope, ...opts }).toString()}`)
+export const loadProjects = (q = '') => getJson<LinearProject[]>(`/api/linear/projects${q ? `?q=${encodeURIComponent(q)}` : ''}`)
+export const projectByLink = (link: string) => getJson<{ project: LinearProject | null }>(`/api/linear/project?link=${encodeURIComponent(link)}`)
+export const lookupIssue = (ref: string) => getJson<{ issue: FoundIssue | null }>(`/api/linear/lookup?ref=${encodeURIComponent(ref)}`)
+export const importIssue = (ref: string, assign: boolean) => post<{ ticket: Ticket }>('/api/linear/import', { ref, assign })
 export const assignToMe = (ids: readonly string[]) => post<{ assigned: string[]; failed: { id: string; error: string }[] }>('/api/linear/assign', { ids })
+export const screenUrl = (serial: string) => `${API}/api/devices/${encodeURIComponent(serial)}/screen`
 export const loadPrView = (id: string) => getJson<PrView>(`/api/tickets/${id}/pr-view`)
 
 async function post<T = unknown>(path: string, body?: unknown): Promise<T> {
@@ -241,11 +264,37 @@ export const actions = {
   start: (t: Ticket, lane: StartChoice, engine?: string) => post(`/api/tickets/${t.id}/start`, { lane, ...(engine ? { engine } : {}) }),
   skip: (t: Ticket) => post(`/api/tickets/${t.id}/skip`),
   done: (t: Ticket) => post(`/api/tickets/${t.id}/done`),
+  dismiss: (t: Ticket) => post<{ status: string }>(`/api/tickets/${t.id}/dismiss`),
+  slackAnnounce: (t: Ticket, channel?: string) => post<{ channel: string }>(`/api/tickets/${t.id}/slack/announce`, channel ? { channel } : {}),
+  updateBranches: (ids: string[]) => post<{ results: BranchUpdateResult[] }>('/api/prs/update-from-main', { ids }),
+  reopen: (t: Ticket) => post<{ status: string; message: string }>(`/api/tickets/${t.id}/reopen`),
   moveInLinear: (t: Ticket, to: 'qa' | 'done') => post(`/api/tickets/${t.id}/linear`, { to }),
   note: (t: Ticket, text: string) => post(`/api/tickets/${t.id}/note`, { text }),
+  checkCi: (t: Ticket) => post<{ ci: CiDiagnosis | null }>(`/api/tickets/${t.id}/ci/check`),
+  rerunCi: (t: Ticket) => post<{ runs: number }>(`/api/tickets/${t.id}/ci/rerun`),
+  fixCi: (t: Ticket) => post(`/api/tickets/${t.id}/ci/fix`),
+  readiness: (t: Ticket) => post<{ readiness: Readiness | null }>(`/api/tickets/${t.id}/readiness`),
+  askInLinear: (t: Ticket, text: string) => post<{ url: string | null }>(`/api/tickets/${t.id}/readiness/ask`, { text }),
+  triageComments: (t: Ticket, ids: string[]) => post<{ triage: Record<string, CommentTriage> }>(`/api/tickets/${t.id}/comments/triage`, { ids }),
+  dismissQuestion: (t: Ticket) => post(`/api/tickets/${t.id}/dismiss-question`),
+  principles: (t: Ticket, on: boolean | null) => post(`/api/tickets/${t.id}/principles`, { on }),
   answer: (t: Ticket, text: string) => post(`/api/tickets/${t.id}/answer`, { text }),
-  push: (t: Ticket) => post(`/api/tickets/${t.id}/push`),
-  fixComments: (t: Ticket, picks?: { id: string; note?: string }[]) => post(`/api/tickets/${t.id}/fix-comments`, picks ? { picks } : {}),
+  // checking: the local checks run first and it pushes if they pass; force pushes past failed ones
+  push: (t: Ticket, force = false) => post<{ result: 'pushed' | 'checking' }>(`/api/tickets/${t.id}/push`, force ? { force: true } : {}),
+  localChecks: (t: Ticket) => post(`/api/tickets/${t.id}/local-checks`),
+  fixLocalChecks: (t: Ticket) => post(`/api/tickets/${t.id}/local-checks/fix`),
+  syncPr: (t: Ticket) => post(`/api/tickets/${t.id}/sync`),
+  testPlan: (t: Ticket) => post<{ plan: TestPlan }>(`/api/tickets/${t.id}/test-plan`),
+  saveTestPlan: (t: Ticket, steps: TestStep[]) => post<{ plan: TestPlan }>(`/api/tickets/${t.id}/test-plan/save`, { steps }),
+  handTest: (t: Ticket, mode: 'mock' | 'preview' | 'chrome', device?: string) => post<{ run: HumanTestRun }>(`/api/tickets/${t.id}/hand-test`, device ? { mode, device } : { mode }),
+  phoneInput: (serial: string, e: { type: 'tap'; x: number; y: number } | { type: 'swipe'; x: number; y: number; x2: number; y2: number; ms: number } | { type: 'key'; key: 'back' | 'home' | 'apps' }) => post(`/api/devices/${encodeURIComponent(serial)}/input`, e),
+  stopHandTest: (t: Ticket) => post(`/api/tickets/${t.id}/hand-test/stop`),
+  ask: (t: Ticket, text: string) => post<{ answer: string; toLane: string | null }>(`/api/tickets/${t.id}/ask`, { text }),
+  pullFromGithub: (t: Ticket) => post<{ outcome: string; commits: number; text: string }>(`/api/tickets/${t.id}/pull`),
+  tellReviewers: (t: Ticket) => post<{ replied: number; resolved: number; requested: string[]; left: number }>(`/api/tickets/${t.id}/tell-reviewers`),
+  // quick: a fresh cheap session, no screenshots or e2e; you check it by hand
+  fixComments: (t: Ticket, picks?: { id: string; note?: string }[], quick = false) => post(`/api/tickets/${t.id}/fix-comments`, { ...(picks ? { picks } : {}), quick }),
+  quickChecked: (t: Ticket) => post(`/api/tickets/${t.id}/quick-check`),
   ignoreComments: (t: Ticket, ids: string[], reopen = false) => post(`/api/tickets/${t.id}/comments/ignore`, { ids, reopen }),
   draftReply: (t: Ticket, comment: string, hint?: string) => post<{ text: string }>(`/api/tickets/${t.id}/comments/draft`, { comment, hint }),
   replyComment: (t: Ticket, comment: string, body: string) => post<{ url: string | null }>(`/api/tickets/${t.id}/comments/reply`, { comment, body }),
@@ -259,25 +308,87 @@ export const actions = {
   descPropose: (t: Ticket, trigger: 'visual' | 'manual') => post(`/api/tickets/${t.id}/pr-desc/propose`, { trigger }),
   descApply: (t: Ticket, input: { accept: string[]; comment: string | null; log: string }) => post<{ url: string | null; applied: number; skipped: number }>(`/api/tickets/${t.id}/pr-desc/apply`, input),
   descDiscard: (t: Ticket) => post(`/api/tickets/${t.id}/pr-desc/discard`),
+  workChecks: (t: Ticket) => post(`/api/tickets/${t.id}/checks/work`),
+  tickChecks: (t: Ticket, lines: string[]) => post<{ ticked: number }>(`/api/tickets/${t.id}/checks/tick`, { lines }),
   visualOverride: (t: Ticket, value: 'on' | 'off' | null) => post(`/api/tickets/${t.id}/visual/override`, { value }),
-  instruct: (t: Ticket, text: string, images: readonly { name: string; data: string }[]) => post<{ ok: boolean; queued?: boolean }>(`/api/tickets/${t.id}/instruct`, { text, images }),
+  instruct: (t: Ticket, text: string, images: readonly { name: string; data: string }[], quick = false) => post<{ ok: boolean; queued?: boolean }>(`/api/tickets/${t.id}/instruct`, { text, images, quick }),
   cancelQueued: (t: Ticket) => post(`/api/tickets/${t.id}/instruct/cancel`),
+  finishChecks: (t: Ticket) => post(`/api/tickets/${t.id}/finish-checks`),
   pauseAfter: (t: Ticket, on: boolean) => post(`/api/tickets/${t.id}/pause-after`, { on }),
-  ready: (t: Ticket) => post<{ reviewers: string[] }>(`/api/tickets/${t.id}/ready`),
-  fixGreptile: (t: Ticket) => post(`/api/tickets/${t.id}/greptile-fix`),
+  // force: past a size or Greptile limit you set
+  ready: (t: Ticket, force = false) => post<{ reviewers: string[] }>(`/api/tickets/${t.id}/ready${force ? '?force=1' : ''}`),
+  // quick left out: quick fix when every finding is P2/P3, a full round when there is a P1
+  fixGreptile: (t: Ticket, quick?: boolean) => post(`/api/tickets/${t.id}/greptile-fix`, quick === undefined ? {} : { quick }),
   openEditor: (t: Ticket) => post<{ editor: string }>(`/api/tickets/${t.id}/open-editor`),
   stop: (t: Ticket) => post(`/api/tickets/${t.id}/stop`),
-  resume: (t: Ticket) => post(`/api/tickets/${t.id}/resume`),
+  resume: (t: Ticket, opts: { engine?: string; fresh?: boolean } = {}) => post(`/api/tickets/${t.id}/resume`, opts),
   updateMain: (t: Ticket) => post(`/api/tickets/${t.id}/update-main`),
+  mergeStart: (t: Ticket) => post<{ files: string[]; editor: string | null }>(`/api/tickets/${t.id}/merge/start`),
+  mergeCheck: (t: Ticket) => post<{ left: string[] }>(`/api/tickets/${t.id}/merge/check`),
+  mergeFinish: (t: Ticket) => post<{ outcome: 'pushed' | 'committed' }>(`/api/tickets/${t.id}/merge/finish`),
+  mergeAbort: (t: Ticket) => post(`/api/tickets/${t.id}/merge/abort`),
+}
+
+export const slackActions = {
+  check: () => post<SlackMention[]>('/api/slack/mentions/check'),
+  summarize: (id: string) => post<SlackMention>(`/api/slack/mentions/${encodeURIComponent(id)}/summarize`),
+  reply: (id: string, text: string) => post<{ ts: string }>(`/api/slack/mentions/${encodeURIComponent(id)}/reply`, { text }),
+  done: (id: string) => post(`/api/slack/mentions/${encodeURIComponent(id)}/done`),
+  doneAll: () => post<{ done: number }>('/api/slack/mentions/done-all'),
+  reviewSummary: () => getJson<{ text: string | null }>('/api/slack/review-summary'),
+  postReviewSummary: (text: string, channel?: string) => post<{ channel: string }>('/api/slack/review-summary', channel ? { text, channel } : { text }),
+  channels: (fresh = false) => getJson<{ channels: SlackChannel[] }>(`/api/slack/channels${fresh ? '?fresh=1' : ''}`),
+  setPerson: (login: string, id: string) => post('/api/slack/people', { login, id }),
+}
+
+export const mascotActions = {
+  coffee: (sips: number) => post<{ mascot: MascotStatus }>('/api/mascot/coffee', { sips }),
+  set: (energy: number) => post<{ mascot: MascotStatus }>('/api/mascot/energy', { energy }),
+}
+
+export const linearSync = {
+  check: () => getJson<{ rows: LinearSyncRow[] }>('/api/linear-sync'),
+  fix: (ids?: readonly string[]) => post<{ rows: LinearSyncRow[] }>('/api/linear-sync', ids ? { ids } : {}),
+}
+
+export const nightActions = {
+  // on / off: your switch · null: back to the schedule and your Slack status
+  set: (manual: 'on' | 'off' | null) => post('/api/night-shift', { manual }),
+  post: (id: string, text?: string) => post<{ mention: SlackMention }>('/api/night-shift/post', text === undefined ? { id } : { id, text }),
+  seen: () => post('/api/night-shift/seen'),
+  // a made-up message, as if a teammate wrote it, to see Night Shift work end to end
+  test: (text: string, from?: string) => post<{ mention: SlackMention }>('/api/night-shift/test', from ? { text, from } : { text }),
+}
+
+export interface NudgeDraft {
+  readonly login: string
+  readonly slackId: string | null
+  readonly name: string
+  readonly local: string | null
+  readonly offHours: boolean
+  readonly text: string
+  readonly items: readonly Nudge[]
+}
+export const nudgeActions = {
+  draft: (picks: readonly { id: string; login: string }[]) => post<{ drafts: NudgeDraft[] }>('/api/nudges/draft', { picks }),
+  send: (login: string, slackId: string, text: string, ids: readonly string[]) => post('/api/nudges/send', { login, slackId, text, ids }),
 }
 
 export const reviewActions = {
   add: (url: string) => post<{ review: PrReview }>('/api/reviews', { url }),
   refresh: () => post('/api/reviews/refresh'),
-  start: (id: string) => post(`/api/reviews/${id}/start`),
+  start: (id: string, depth?: ReviewDepth) => post(`/api/reviews/${id}/start`, depth ? { depth } : {}),
+  open: () => getJson<OpenPr[]>('/api/reviews/open'),
+  pick: (number: number, depth: ReviewDepth) => post<{ review: PrReview }>('/api/reviews/pick', { number, depth }),
   stop: (id: string) => post(`/api/reviews/${id}/stop`),
   dismiss: (id: string) => post(`/api/reviews/${id}/dismiss`),
   post: (id: string, input: { event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'; body: string; findings: { id: string; body: string }[] }) => post<{ review: PrReview }>(`/api/reviews/${id}/post`, input),
+  followUp: (id: string) => post<{ review: PrReview }>(`/api/reviews/${id}/followup`),
+  checkFollowUp: (id: string) => post<{ review: PrReview }>(`/api/reviews/${id}/followup/check`),
+  resolveThread: (id: string, thread: string) => post<{ review: PrReview }>(`/api/reviews/${id}/threads/${encodeURIComponent(thread)}/resolve`),
+  replyThread: (id: string, thread: string, text: string) => post<{ review: PrReview }>(`/api/reviews/${id}/threads/${encodeURIComponent(thread)}/reply`, { text }),
+  approve: (id: string, body: string) => post<{ review: PrReview }>(`/api/reviews/${id}/approve`, { body }),
+  ping: (id: string, text: string) => post<{ review: PrReview }>(`/api/reviews/${id}/ping`, { text }),
 }
 
 export const controls = {
@@ -287,11 +398,17 @@ export const controls = {
   refresh: () => post('/api/control/refresh'),
   probe: () => post<Health>('/api/control/probe'),
   restartBot: () => post<Health>('/api/control/restart-bot'),
+  restartDaemon: () => post('/api/control/restart-daemon'),
+  engineSetup: () => getJson<EngineSetupStatus[]>('/api/engines/setup'),
+  installEngine: (id: string) => post<{ status: EngineSetupStatus }>(`/api/engines/${id}/install`, { confirm: true }),
+  engineTerminal: (id: string, step: 'install' | 'login') => post<{ app: string }>(`/api/engines/${id}/terminal`, { step }),
   testEngine: (id: string) => post<{ ok: boolean; text: string; model: string | null; seconds: number; detail: string }>(`/api/engines/${id}/test`),
   githubLogin: () => post('/api/control/github-login'),
   effort: (effort: Effort) => post<Health>('/api/control/effort', { effort }),
   parallel: (n: number) => post<Health>('/api/control/parallel', { n }),
   saveSettings: (patch: Settings) => post<SettingsView>('/api/settings', patch),
   resetSetting: (key: string) => post<SettingsView>('/api/settings/reset', { key }),
+  principlesUpdate: () => post<PrinciplesUpdate>('/api/principles/update'),
+  revokeSessions: () => post<{ revoked: number }>('/api/control/sessions/revoke'),
   stopAll: (shutdown: boolean) => post<{ stopped: string[]; pending: string }>('/api/control/stop-all', { shutdown }),
 }

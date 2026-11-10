@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "metwo",
+  "productName": "mevo",
   "version": "0.1.0",
   "identifier": "com.coderoasters.metwo",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "metwo",
+        "title": "mevo",
         "width": 1320,
         "height": 840,
         "minWidth": 900,
@@ -24,7 +24,19 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src": "'self' data: https://fonts.gstatic.com",
+        "img-src": "'self' data: blob: http://localhost:4747 http://127.0.0.1:4747 https:",
+        "media-src": "'self' blob: http://localhost:4747 http://127.0.0.1:4747 https:",
+        "connect-src": "'self' ipc: http://ipc.localhost http://localhost:4747 http://127.0.0.1:4747",
+        "frame-src": "'none'",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      }
     }
   },
   "bundle": {

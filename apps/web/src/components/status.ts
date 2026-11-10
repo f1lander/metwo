@@ -1,12 +1,27 @@
-import { markdownSection, modelName, type Ticket, type TicketStatus } from '@ticketflow/shared'
+import { markdownSection, modelName, openComments, type Ticket, type TicketStatus } from '@ticketflow/shared'
 
 export { modelName }
 
-export const COLUMNS: readonly { readonly title: string; readonly dot: string; readonly statuses: readonly TicketStatus[] }[] = [
+// A PR you marked ready for review on GitHub, still open.
+export const inReview = (t: Ticket) => t.status === 'pr_draft' && t.pr?.isDraft === false && t.pr.state === 'OPEN'
+
+// In review with teammates' comments you have not fixed, answered or set aside yet.
+export const waitingOnComments = (t: Ticket) => inReview(t) && openComments(t).length > 0
+
+// An open PR (draft or in review) that can't merge as it is: conflicts with main on GitHub or in the
+// local dry run, a merge you started by hand, or GitHub commits that conflict with local ones.
+export function hasConflicts(t: Ticket): boolean {
+  if (t.pr?.state !== 'OPEN') return false
+  return t.pr.mergeable === 'CONFLICTING' || Boolean(t.behindMain?.conflicts) || Boolean(t.manualMerge) || t.behindPr?.why === 'conflicts'
+}
+
+export const COLUMNS: readonly { readonly title: string; readonly dot: string; readonly statuses: readonly TicketStatus[]; readonly match?: (t: Ticket) => boolean }[] = [
   { title: 'Assigned', dot: 'border-[1.5px] border-muted', statuses: ['assigned'] },
   { title: 'Working', dot: 'bg-accent-fg', statuses: ['queued', 'running'] },
   { title: 'Needs me', dot: 'bg-warn', statuses: ['needs_input', 'review_ready', 'no_change', 'stopped', 'failed'] },
-  { title: 'PR open', dot: 'bg-ok-dot', statuses: ['pr_draft'] },
+  { title: 'Conflicts', dot: 'bg-bad', statuses: ['pr_draft'], match: (t) => hasConflicts(t) },
+  { title: 'Draft PR', dot: 'bg-ok-dot', statuses: ['pr_draft'], match: (t) => !inReview(t) && !hasConflicts(t) },
+  { title: 'In review', dot: 'bg-accent-fg', statuses: ['pr_draft'], match: (t) => inReview(t) && !hasConflicts(t) },
   { title: 'Closed', dot: 'bg-dim', statuses: ['done', 'skipped'] },
 ]
 

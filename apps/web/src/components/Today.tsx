@@ -1,13 +1,20 @@
-import type { AskReply, AssistAction, PrReview, Ticket, TodayItem } from '@ticketflow/shared'
+import { ChangesRequested, ReviewSummary } from './FollowUp.js'
+import { LinearSyncCard } from './LinearSync.js'
+import { NightShiftCard, handoffIds } from './NightShift.js'
+import { NudgesToday } from './Nudge.js'
+import { type AskReply, type AssistAction, openComments, type PrReview, type Ticket, type TodayItem, type SlackMention, type NightShiftState } from '@ticketflow/shared'
 import { AnimatePresence, motion } from 'motion/react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { askMetwo, loadToday, runAssist, triageNow } from '../lib/api.js'
 import { failed, notice } from '../lib/notice.js'
+import { ASK_EVENT } from '../lib/mascot.js'
 import { href } from '../lib/route.js'
 import { useTriageMap } from '../lib/triage.js'
 import { openCycle } from './Cycle.js'
+import { SlackMentions } from './Slack.js'
 import { Markdown } from './Markdown.js'
-import { Button, TriageChip } from './ui.js'
+import { waitingOnComments } from './status.js'
+import { Avatar, Button, timeAgo, TriageChip } from './ui.js'
 
 const GROUPS: readonly [TodayItem['group'], string, string][] = [
   ['now', 'Needs you', 'Nothing waiting on you.'],
@@ -30,7 +37,7 @@ interface Turn {
 
 // Today's brief from rules (no AI): what needs you, PRs to review, what to pick from the cycle,
 // each with its button. Asking in plain words is below and is the only part that uses AI.
-export function TodayPage({ tickets, reviews }: { tickets: readonly Ticket[]; reviews: readonly PrReview[] }) {
+export function TodayPage({ tickets, reviews, mentions = [], night, slack = false }: { tickets: readonly Ticket[]; reviews: readonly PrReview[]; mentions?: readonly SlackMention[]; night?: NightShiftState; slack?: boolean }) {
   const [items, setItems] = useState<TodayItem[] | null>(null)
   const [turns, setTurns] = useState<Turn[]>([])
   const [q, setQ] = useState('')
@@ -38,6 +45,16 @@ export function TodayPage({ tickets, reviews }: { tickets: readonly Ticket[]; re
   const triage = useTriageMap()
   const stamp = useMemo(() => tickets.map((t) => `${t.id}:${t.status}:${t.pr?.syncedAt ?? ''}`).join('|') + reviews.map((r) => r.status).join(), [tickets, reviews])
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const askRef = useRef<HTMLInputElement>(null)
+  // a click on Mo away from a ticket lands here
+  useEffect(() => {
+    const onAsk = () => {
+      askRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      askRef.current?.focus({ preventScroll: true })
+    }
+    addEventListener(ASK_EVENT, onAsk)
+    return () => removeEventListener(ASK_EVENT, onAsk)
+  }, [])
 
   useEffect(() => {
     clearTimeout(timer.current)
@@ -51,7 +68,7 @@ export function TodayPage({ tickets, reviews }: { tickets: readonly Ticket[]; re
     if (!question || asking) return
     setQ('')
     setAsking(true)
-    const history = turns.flatMap((t) => [{ role: 'you' as const, text: t.q }, ...(t.reply ? [{ role: 'metwo' as const, text: t.reply.answer }] : [])])
+    const history = turns.flatMap((t) => [{ role: 'you' as const, text: t.q }, ...(t.reply ? [{ role: 'mevo' as const, text: t.reply.answer }] : [])])
     setTurns((list) => [...list, { q: question }].slice(-5))
     try {
       const reply = await askMetwo(question, history)
@@ -80,6 +97,7 @@ export function TodayPage({ tickets, reviews }: { tickets: readonly Ticket[]; re
   const brief = items
     ? [
         count('now') ? `${count('now')} thing${count('now') === 1 ? '' : 's'} need${count('now') === 1 ? 's' : ''} you` : 'nothing is waiting on you',
+        tickets.some(waitingOnComments) ? `${tickets.filter(waitingOnComments).length} PR${tickets.filter(waitingOnComments).length === 1 ? ' has' : 's have'} comments to address` : '',
         count('reviews') ? `${count('reviews')} PR${count('reviews') === 1 ? '' : 's'} to review` : '',
         easy.length ? `${easy.length} easy ticket${easy.length === 1 ? '' : 's'} in the cycle` : '',
         running ? `${running} lane${running === 1 ? '' : 's'} working` : '',
@@ -95,6 +113,15 @@ export function TodayPage({ tickets, reviews }: { tickets: readonly Ticket[]; re
           <p className="text-sm text-fg-2">{items ? `${brief.join(', ')}.`.replace(/^./, (c) => c.toUpperCase()) : 'Loading…'}</p>
           <p className="mt-0.5 text-[11px] text-dim">From your tickets, PRs, reviews and the cycle, as they are right now. No AI runs here until you ask below.</p>
         </header>
+
+        <NightShiftCard night={night} mentions={mentions} slack={slack} />
+        <SlackMentions mentions={mentions.filter((m) => !handoffIds(night).has(m.id))} />
+
+        <ChangesRequested tickets={tickets} />
+        <NudgesToday tickets={tickets} />
+        <CommentsWaiting tickets={tickets} />
+        <ReviewSummary tickets={tickets} />
+        <LinearSyncCard />
 
         {groups.map(({ group, title, empty, list }) => {
           const shown = open[group] ? list : list.slice(0, 3)
@@ -133,16 +160,17 @@ export function TodayPage({ tickets, reviews }: { tickets: readonly Ticket[]; re
         })}
 
         <section className="flex flex-col gap-2 pt-2">
-          <div className="px-1 text-xs font-medium text-muted">Ask metwo</div>
+          <div className="px-1 text-xs font-medium text-muted">Ask mevo</div>
           <form onSubmit={(e) => void ask(e)} className="flex items-center gap-2 rounded-xl border border-line-2 bg-panel px-3 py-2 focus-within:border-accent/60">
             <span className="text-accent-fg" aria-hidden="true">
               ✦
             </span>
             <input
+              ref={askRef}
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Anything about your tickets, PRs or the cycle. Uses AI only when you send."
-              aria-label="ask metwo"
+              aria-label="ask mevo"
               className="min-w-0 flex-1 bg-transparent py-1 text-sm text-fg outline-none placeholder:text-dim"
             />
             <Button variant="primary" type="submit" disabled={asking || !q.trim()}>
@@ -296,5 +324,49 @@ function Answer({ reply, tickets, reviews, known, onRun }: { reply: AskReply; ti
         </div>
       )}
     </>
+  )
+}
+
+// Your PRs in review with teammates' comments still open: the quickest wins of the day.
+function CommentsWaiting({ tickets }: { tickets: readonly Ticket[] }) {
+  const list = tickets
+    .filter(waitingOnComments)
+    .map((t) => ({ t, open: openComments(t) }))
+    .sort((a, b) => (b.open.at(-1)?.createdAt ?? '').localeCompare(a.open.at(-1)?.createdAt ?? ''))
+  if (!list.length) return null
+  return (
+    <section className="flex flex-col gap-1 rounded-xl border border-line bg-panel px-3 py-3">
+      <div className="flex items-center gap-2 px-1 text-xs font-medium text-muted">
+        Comments to address
+        <span className="text-dim">{list.length}</span>
+        <a href={`${href.board}?f=comments`} className="ml-auto font-normal hover:text-fg">
+          On the board
+        </a>
+      </div>
+      {list.map(({ t, open }) => {
+        const who = [...new Set(open.map((c) => c.author))]
+        const tri = open.map((c) => t.commentTriage?.[c.id]?.verdict).filter(Boolean)
+        const fix = tri.filter((v) => v === 'valid' || v === 'partly').length
+        return (
+          <a key={t.id} href={href.ticket(t.id)} className="group flex items-center gap-3 rounded-lg px-1 py-1.5 hover:bg-raised">
+            <span className="flex shrink-0 -space-x-1.5">
+              {who.slice(0, 3).map((l) => (
+                <Avatar key={l} login={l} size={18} className="ring-2 ring-panel" />
+              ))}
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm text-fg">
+                <span className="text-muted">{t.id}</span> {t.title}
+              </span>
+              <span className="truncate text-[11px] text-dim">
+                {open.length} open comment{open.length === 1 ? '' : 's'} from {who.join(', ')} · PR #{t.pr?.number} · last {timeAgo(open.at(-1)?.createdAt)} ago
+                {tri.length > 0 && ` · analyzed: ${fix} to fix, ${tri.length - fix} to reply`}
+              </span>
+            </span>
+            <span className="shrink-0 text-xs text-accent-fg opacity-70 group-hover:opacity-100">{tri.length ? 'Address' : 'Analyze'} →</span>
+          </a>
+        )
+      })}
+    </section>
   )
 }

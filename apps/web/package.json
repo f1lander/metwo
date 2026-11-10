@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@mevo/mascot": "workspace:*",
     "@tauri-apps/api": "^2.12.4",
     "@ticketflow/shared": "workspace:*",
     "dompurify": "^3.4.17",

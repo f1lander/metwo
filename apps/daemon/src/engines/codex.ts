@@ -9,8 +9,9 @@ const reasoning = (e: Effort) => (e === 'max' ? 'high' : e)
 export const codex: Engine = {
   id: 'codex',
   label: 'Codex',
+  readOnly: true,
   async run(opts: RunOptions): Promise<RunResult> {
-    const flags = ['--json', '--sandbox', 'danger-full-access', '--skip-git-repo-check', '-c', `model_reasoning_effort="${reasoning(opts.effort)}"`]
+    const flags = ['--json', '--sandbox', opts.readOnly ? 'read-only' : 'danger-full-access', '--skip-git-repo-check', '-c', `model_reasoning_effort="${reasoning(opts.effort)}"`]
     if (opts.model) flags.push('-m', opts.model)
     const args = opts.resume ? ['exec', ...flags, 'resume', opts.resume, opts.prompt] : ['exec', ...flags, opts.prompt]
     let sessionId: string | null = opts.resume ?? null

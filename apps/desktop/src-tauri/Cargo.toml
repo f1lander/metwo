@@ -1,7 +1,7 @@
 [package]
 name = "metwo"
 version = "0.1.0"
-description = "metwo desktop shell: runs the daemon, tray, board"
+description = "mevo desktop shell: runs the daemon, tray, board"
 edition = "2021"
 
 [lib]

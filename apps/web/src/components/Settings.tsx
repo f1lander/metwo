@@ -1,4 +1,4 @@
-import type { CheckState, Effort, Health, PlanFirst, SettingsView } from '@ticketflow/shared'
+import { type CheckState, type Effort, ENGINE_SETUP, type EngineSetupStatus, type Health, type PlanFirst, type PrinciplesUpdate, type NightShiftConfig, type RollCall, type SettingsView } from '@ticketflow/shared'
 import { AnimatePresence, motion } from 'motion/react'
 import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { controls, loadSettings } from '../lib/api.js'
@@ -6,7 +6,8 @@ import { href, type SettingsTab } from '../lib/route.js'
 import { type DaemonProcess, desktop, isDesktop } from '../lib/tauri.js'
 import { modelName } from './status.js'
 import { Button, ConfirmButton, Count, Dot, Mono, rise, Section, stagger, timeAgo } from './ui.js'
-import { failed } from '../lib/notice.js'
+import { failed, notice } from '../lib/notice.js'
+import { Mascot } from '@mevo/mascot/react'
 
 const TABS: readonly { id: SettingsTab; label: string }[] = [
   { id: 'general', label: 'General' },
@@ -19,7 +20,7 @@ const TABS: readonly { id: SettingsTab; label: string }[] = [
 type Patch = Parameters<typeof controls.saveSettings>[0]
 type Run = (key: string, fn: () => Promise<unknown>) => () => Promise<void>
 
-// Everything you can change while metwo runs. Changes are saved in data/state.json and win over
+// Everything you can change while mevo runs. Changes are saved in data/state.json and win over
 // ticketflow.config.json; "reset" goes back to the file's value.
 export function SettingsPage({ health, refresh, tab }: { health: Health | null; refresh: () => Promise<void>; tab: SettingsTab }) {
   const [busy, setBusy] = useState<string | null>(null)
@@ -77,7 +78,7 @@ export function SettingsPage({ health, refresh, tab }: { health: Health | null; 
         ) : tab === 'engines' ? (
           <EnginesTab health={health} view={view} save={save} reset={reset} />
         ) : tab === 'integrations' ? (
-          <Integrations health={health} busy={busy} run={run} />
+          <Integrations health={health} busy={busy} run={run} view={view} save={save} reset={reset} />
         ) : (
           <StatusTab health={health} busy={busy} setBusy={setBusy} run={run} refresh={refresh} />
         )}
@@ -194,6 +195,7 @@ const has = (obj: object | undefined, key: string) => Boolean(obj && key in obj)
 function General({ health, view, busy, run, save, reset }: { health: Health; view: SettingsView; busy: string | null; run: Run; save: (p: Patch) => void; reset: (k: string) => void }) {
   const ap = view.effective.autopilot
   const o = view.overrides
+  const q = view.effective.quality
   return (
     <>
       <Panel
@@ -209,8 +211,56 @@ function General({ health, view, busy, run, save, reset }: { health: Health; vie
         <Row label="Tickets per day" hint="After this many, new small tickets wait for you." changed={has(o.autopilot, 'maxPerDay')} onReset={() => reset('autopilot.maxPerDay')}>
           <NumberField label="tickets per day" value={ap.maxPerDay} min={1} onSave={(v) => v && save({ autopilot: { maxPerDay: Math.round(v) } })} />
         </Row>
+        <Row label="Check readiness before starting" hint={`A cheap model reads each new ticket and its Linear discussion: ready, needs clarification or hold. Autopilot only starts it when it is ready and at least ${view.effective.readiness.minConfidence}% sure. Your own starts just get a warning.`} changed={has(o.readiness, 'auto')} onReset={() => reset('readiness.auto')}>
+          <Toggle label="readiness check" on={view.effective.readiness.auto} onChange={(v) => save({ readiness: { auto: v } })} />
+        </Row>
+        <Row label="Readiness engine" hint="Auto: OpenCode with its model when it is enabled (free models work), otherwise Claude Haiku. It gets no tools, only the ticket text." changed={has(o.readiness, 'engine')} onReset={() => reset('readiness.engine')}>
+          <Select label="readiness engine" value={view.effective.readiness.engine} options={[{ value: 'auto', label: 'Auto' }, { value: 'opencode', label: 'OpenCode' }, { value: 'claude:haiku', label: 'Claude Haiku' }, { value: 'claude:sonnet', label: 'Claude Sonnet' }, { value: 'off', label: 'Off' }]} onChange={(v) => save({ readiness: { engine: v } })} />
+        </Row>
+        <Row label="Questions in the ticket chat" hint="Ask mode answers from the ticket's history (commits, review threads, checks) and read-only git. No lane runs and nothing changes." changed={has(o.chat, 'ask')} onReset={() => reset('chat.ask')}>
+          <Select label="chat engine" value={view.effective.chat.ask} options={[{ value: 'claude:sonnet', label: 'Claude Sonnet' }, { value: 'claude:haiku', label: 'Claude Haiku' }, { value: 'claude:opus', label: 'Claude Opus' }, { value: 'codex', label: 'Codex (read-only)' }]} onChange={(v) => save({ chat: { ask: v } })} />
+        </Row>
+        <Row label="Autopilot needs" hint="Confidence the readiness check must reach before autopilot starts a ticket." changed={has(o.readiness, 'minConfidence')} onReset={() => reset('readiness.minConfidence')}>
+          <NumberField label="minimum confidence" value={view.effective.readiness.minConfidence} min={0} onSave={(v) => v !== null && save({ readiness: { minConfidence: Math.max(0, Math.min(100, Math.round(v))) } })} />
+        </Row>
         <Row label="Triage the cycle by itself" hint="AI sizes new and edited cycle issues a few times a day. Off: only when you press Triage. Each run counts in the budget." changed={has(view.overrides, 'triage')} onReset={() => reset('triage')}>
           <Toggle label="auto triage" on={view.effective.triage?.auto ?? false} onChange={(v) => save({ triage: { auto: v } })} />
+        </Row>
+      </Panel>
+
+      <Panel title="After you address review comments" hint="What happens on GitHub when a push answers a reviewer who requested changes. The Reviewers card on the ticket also has a button for it.">
+        <Row label="Reply in the threads" hint={'"Addressed in <commit>" in each thread you dealt with, unless you already answered it.'} changed={has(o.afterFix, 'reply')} onReset={() => reset('afterFix.reply')}>
+          <Toggle label="reply in threads" on={view.effective.afterFix.reply} onChange={(v) => save({ afterFix: { reply: v } })} />
+        </Row>
+        <Row label="Resolve the threads" hint="Off by default: many reviewers like to resolve their own threads after checking." changed={has(o.afterFix, 'resolve')} onReset={() => reset('afterFix.resolve')}>
+          <Toggle label="resolve threads" on={view.effective.afterFix.resolve} onChange={(v) => save({ afterFix: { resolve: v } })} />
+        </Row>
+        <Row label="Ask for a re-review" hint="Once every thread from a reviewer who requested changes is answered, re-request their review so GitHub shows it on their list." changed={has(o.afterFix, 'rerequest')} onReset={() => reset('afterFix.rerequest')}>
+          <Toggle label="re-request review" on={view.effective.afterFix.rerequest} onChange={(v) => save({ afterFix: { rerequest: v } })} />
+        </Row>
+      </Panel>
+
+      <Panel title="Before the PR" hint="What CI runs, run here first: a red result keeps the PR closed until the lane fixes it or you push anyway.">
+        <Row label="Local checks" hint="Typecheck, lint and tests (reused when the supervisor just ran them green), then e2e. Runs when a lane finishes and before any push." changed={has(o.localChecks, 'enabled')} onReset={() => reset('localChecks.enabled')}>
+          <Toggle label="local checks" on={view.effective.localChecks.enabled} onChange={(v) => save({ localChecks: { enabled: v } })} />
+        </Row>
+        <Row label="e2e specs" hint="Related: only the specs for the feature the change touches (registration changes run registration*.spec). All: every spec CI would run for that app, about an hour. One e2e run at a time; they share the local chain." changed={has(o.localChecks, 'e2e')} onReset={() => reset('localChecks.e2e')}>
+          <Segmented label="e2e specs" value={view.effective.localChecks.e2e} options={['related', 'all', 'off'] as const} onChange={(v) => save({ localChecks: { e2e: v } })} />
+        </Row>
+      </Panel>
+
+      <Panel title="Reviewable PRs" hint="Small PRs a person can review in one sitting: about 200 changed lines is the sweet spot, 400 the most. Lockfiles and snapshots are not counted. Empty means no limit.">
+        <Row label="Aim for" hint="Lines the lane aims for. Bigger work: it does the first slice that stands on its own and lists the rest as follow-ups." changed={has(o.quality, 'targetLines')} onReset={() => reset('quality.targetLines')}>
+          <NumberField label="target lines" placeholder="no limit" min={20} value={q.targetLines} onSave={(n) => save({ quality: { targetLines: n === null ? null : Math.round(n) } })} />
+        </Row>
+        <Row label="Most" hint="Over it the PR is not marked ready for review (you can still do it anyway) and autopilot stops before the PR." changed={has(o.quality, 'maxLines')} onReset={() => reset('quality.maxLines')}>
+          <NumberField label="max lines" placeholder="no limit" min={20} value={q.maxLines} onSave={(n) => save({ quality: { maxLines: n === null ? null : Math.round(n) } })} />
+        </Row>
+        <Row label="Greptile at least" hint="Score out of 5 a PR needs before it is marked ready for review." changed={has(o.quality, 'minGreptile')} onReset={() => reset('quality.minGreptile')}>
+          <NumberField label="minimum Greptile score" placeholder="none" min={1} value={q.minGreptile} onSave={(n) => save({ quality: { minGreptile: n === null ? null : Math.min(5, Math.round(n)) } })} />
+        </Row>
+        <Row label="Security lens" hint="When the diff adds signing, transactions, approvals, auth, storage or raw HTML, the review pass also reads it like a bug bounty researcher." changed={has(o.quality, 'securityLens')} onReset={() => reset('quality.securityLens')}>
+          <Toggle label="security lens" on={q.securityLens} onChange={(v) => save({ quality: { securityLens: v } })} />
         </Row>
       </Panel>
 
@@ -254,8 +304,124 @@ function General({ health, view, busy, run, save, reset }: { health: Health; vie
             </div>
           </Row>
         )}
+        <Row label="Restart for new code" hint="When mevo's code changes on disk (a pull, a fix), it restarts by itself as soon as no lane, check or hand test is running, so nothing runs on old code. Only when the desktop app runs mevo; from a terminal the app just tells you." changed={has(o.daemon, 'autoRestart')} onReset={() => reset('daemon.autoRestart')}>
+          <Toggle label="restart for new code" on={view.effective.daemon.autoRestart} onChange={(v) => save({ daemon: { autoRestart: v } })} />
+        </Row>
       </Panel>
+      <Panel title="Mo" hint="The o of the logo, out in the app: he is the Tell the agent button, reacts to merges, failures and questions, and sleeps during Night Shift. Drag him to any corner; ✕ puts him back in the logo and a click on the logo brings him out.">
+        <Row label="Show Mo" hint="Off: the classic Tell the agent button." changed={has(o.mascot, 'enabled')} onReset={() => reset('mascot.enabled')}>
+          <Mascot state="idle" width={34} />
+          <Toggle label="show mo" on={view.effective.mascot.enabled} onChange={(v) => save({ mascot: { enabled: v } })} />
+        </Row>
+        <Row label="Coffee game" hint="Closing an issue costs 18% of his coffee and every lane turn 3%. Click him a few times in a row to refill. At 0% no new lane starts (from here, Telegram or autopilot) until he gets coffee; lanes already running finish." changed={has(o.mascot, 'coffee')} onReset={() => reset('mascot.coffee')}>
+          <Toggle label="coffee game" on={view.effective.mascot.coffee} onChange={(v) => save({ mascot: { coffee: v } })} />
+        </Row>
+      </Panel>
+
+      <Principles health={health} view={view} save={save} reset={reset} />
     </>
+  )
+}
+
+const PHASE_LABEL = { implement: 'Every lane', bug: 'Bug playbook', feature: 'Feature playbook', refactor: 'Refactor playbook', perf: 'Perf playbook', visual: 'Visual playbook', review: 'Review lenses', prose: 'Prose' } as const
+
+// pstack, pinned to one commit. A newer commit only comes in after you read its diff and accept it.
+function Principles({ health, view, save, reset }: { health: Health; view: SettingsView; save: (p: Patch) => void; reset: (k: string) => void }) {
+  const p = health.lanes.principles
+  const on = view.effective.principles?.enabled ?? false
+  const [update, setUpdate] = useState<PrinciplesUpdate | null>(null)
+  const [checking, setChecking] = useState(false)
+  if (!p) return null
+  const web = p.repo.startsWith('https://github.com/') ? p.repo.replace(/\.git$/, '') : null
+  const check = async () => {
+    setChecking(true)
+    try {
+      const u = await controls.principlesUpdate()
+      setUpdate(u)
+      if (u.latest === u.current) notice({ title: 'pstack is up to date', tone: 'ok' })
+    } catch (err) {
+      failed(err)
+    } finally {
+      setChecking(false)
+    }
+  }
+  const state = !on ? 'off' : p.error ? p.error : p.head === p.ref ? `on disk${p.syncedAt ? `, checked ${timeAgo(p.syncedAt)}` : ''}` : 'fetching…'
+  return (
+    <Panel
+      title="Engineering principles"
+      hint={
+        <>
+          {web ? (
+            <a href={web} target="_blank" rel="noreferrer" className="text-fg-2 underline decoration-line-2 underline-offset-2 hover:text-fg">
+              pstack
+            </a>
+          ) : (
+            'pstack'
+          )}{' '}
+          (MIT). Lanes read these files before they code and follow a playbook picked from the ticket (bug, feature, refactor, perf or visual match), the review pass and PR reviews apply them as lenses, and the supervisor checks the diff against them. Only the markdown is used; their steps that spawn agents, push or open PRs are ignored.
+        </>
+      }
+    >
+      <Row label="Use them on every ticket" hint="Each ticket can still turn them off or on for itself, from its Overview." changed={has(view.overrides.principles, 'enabled')} onReset={() => reset('principles.enabled')}>
+        <Toggle label="engineering principles" on={on} onChange={(v) => save({ principles: { enabled: v } })} />
+      </Row>
+      <Row label="Pinned commit" hint={<span className={on && p.error ? 'text-bad' : ''}>{state}. Nothing changes until you accept a newer commit.</span>} changed={has(view.overrides.principles, 'ref')} onReset={() => reset('principles.ref')}>
+        {web ? (
+          <a href={`${web}/commit/${p.ref}`} target="_blank" rel="noreferrer" className="hover:text-fg">
+            <Mono className="text-fg-2">{p.ref.slice(0, 7)}</Mono>
+          </a>
+        ) : (
+          <Mono className="text-fg-2">{p.ref.slice(0, 7)}</Mono>
+        )}
+        <Button disabled={!on || checking} onClick={() => void check()}>
+          {checking ? 'Checking…' : 'Check for updates'}
+        </Button>
+      </Row>
+      <AnimatePresence initial={false}>
+        {update && update.latest !== update.current && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+            <div className="flex flex-col gap-2 px-4 py-3">
+              <p className="text-xs text-fg-2">
+                Newer commit <Mono>{update.latest.slice(0, 7)}</Mono>. Read what changed in the files mevo uses before you accept it: it becomes part of every lane's prompt.
+              </p>
+              {update.stat && <pre className="max-h-40 overflow-auto rounded-md border border-line bg-sunk px-3 py-2 font-mono text-[11px] leading-relaxed text-muted">{update.stat}</pre>}
+              <details className="text-xs" open={update.diff.length < 4000}>
+                <summary className="cursor-pointer text-muted">{update.diff ? 'Diff of the files mevo uses' : 'The files mevo uses did not change'}</summary>
+                {update.diff && <pre className="mt-2 max-h-96 overflow-auto rounded-md border border-line bg-sunk px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-fg-2">{update.diff}</pre>}
+              </details>
+              <div className="flex gap-2">
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    save({ principles: { ref: update.latest } })
+                    setUpdate(null)
+                  }}
+                >
+                  Accept {update.latest.slice(0, 7)}
+                </Button>
+                <Button onClick={() => setUpdate(null)}>Keep {update.current.slice(0, 7)}</Button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <Row label="What each step reads">
+        <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11px]">
+          {(Object.keys(PHASE_LABEL) as (keyof typeof PHASE_LABEL)[]).map((k) => (
+            <Fragment key={k}>
+              <span className="text-fg-2">{PHASE_LABEL[k]}</span>
+              <span className="flex max-w-md flex-wrap gap-1">
+                {(p.files[k] ?? []).map((f) => (
+                  <span key={f.path} title={f.present ? f.path : `${f.path}: not in this commit`} className={`rounded bg-raised px-1.5 py-px font-mono ${f.present || !p.head ? 'text-muted' : 'text-dim line-through'}`}>
+                    {f.path.replace(/^principle-/, '').replace(/\/SKILL\.md$|\.md$/, '')}
+                  </span>
+                ))}
+              </span>
+            </Fragment>
+          ))}
+        </div>
+      </Row>
+    </Panel>
   )
 }
 
@@ -356,7 +522,7 @@ function EnginesTab({ health, view, save, reset }: { health: Health; view: Setti
   )
   return (
     <>
-      <Panel title="Engines" hint="Each one is a CLI on this Mac, signed in with your account. Install and sign in first (docs/engines.md), then turn it on here.">
+      <Panel title="Engines" hint="Each one is a CLI on this Mac, signed in with your account. Turn one on, then Install and Sign in from its row if it needs it.">
         <EngineRow id="claude" label="Claude Code" status={status.get('claude')} always />
         {(['codex', 'cursor', 'opencode', 'hermes'] as const).map((id) => (
           <EngineRow key={id} id={id} label={{ codex: 'Codex', cursor: 'Cursor', opencode: 'OpenCode', hermes: 'Hermes' }[id]} status={status.get(id)}>
@@ -380,7 +546,7 @@ function EnginesTab({ health, view, save, reset }: { health: Health; view: Setti
           <Select label="full implementer" value={r.implementer.full} options={engineOptions} onChange={(v) => save({ roles: { implementer: { full: v } } })} />
         </Row>
         {role('reviewer', [], 'Reviewer', 'The review pass on finished work, and the PRs you review.')}
-        {role('supervisor', [{ value: 'opposite', label: 'opposite vendor' }, { value: 'off', label: 'off' }], 'Supervisor', 'Checks finished work against the ticket after metwo re-runs the gates.')}
+        {role('supervisor', [{ value: 'opposite', label: 'opposite vendor' }, { value: 'off', label: 'off' }], 'Supervisor', 'Checks finished work against the ticket after mevo re-runs the gates.')}
         <Row label="Supervisor rounds" hint="How many times concerns go back to the implementer." changed={has(ro, 'supervisorRounds')} onReset={() => reset('roles.supervisorRounds')}>
           <NumberField label="supervisor rounds" value={r.supervisorRounds} onSave={(v) => v !== null && save({ roles: { supervisorRounds: Math.round(v) } })} />
         </Row>
@@ -409,13 +575,14 @@ function EngineRow({ id, label, status, always = false, children }: { id: string
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-xs">
       <Dot ok={status ? status.installed && status.signedIn !== false : always ? true : null} />
       <span className="w-24 font-medium text-fg">{label}</span>
-      <span className="min-w-0 flex-1 truncate text-dim">{status ? `${status.version ?? 'not installed'} · ${status.detail}` : always ? 'always on' : 'off'}</span>
+      <span className="min-w-0 flex-1 truncate text-dim">{status ? (status.installed ? `${status.version ?? 'installed'} · ${status.detail}` : 'not installed') : always ? 'always on' : 'off'}</span>
       <span className="flex flex-wrap items-center gap-2">
         {children}
         <Button variant="ghost" disabled={testing || !status?.installed} onClick={() => void test()}>
           {testing ? 'Testing…' : 'Test'}
         </Button>
       </span>
+      {status && <EngineSetupBar id={id} status={status} />}
       {status && status.roles.length > 0 && (
         <span className="w-full pl-[22px] text-[11px] text-muted">
           {status.roles.join(' · ')}
@@ -426,8 +593,50 @@ function EngineRow({ id, label, status, always = false, children }: { id: string
   )
 }
 
-function Integrations({ health, busy, run }: { health: Health; busy: string | null; run: Run }) {
+function Integrations({ health, busy, run, view, save, reset }: { health: Health; busy: string | null; run: Run; view: SettingsView; save: (p: Patch) => void; reset: (k: string) => void }) {
+  const sl = view.effective.slack
+  const so = view.overrides.slack
+  const slackCheck = health.slack ?? { ok: null, detail: 'add the Slack tokens to .env', at: null }
+  const figmaCheck = health.figma ?? { ok: null, detail: 'add FIGMA_TOKEN to .env', at: null }
   return (
+    <>
+    <Panel
+      title="Figma"
+      hint="When a ticket links a Figma frame, the daemon renders it and reads its spec (sizes, spacing, colors, type, components) with your token, and the lane builds against it. The visual check and the supervisor compare the result with it. UI tickets without a link get a note."
+    >
+      <Row label="Use Figma links in tickets" hint={<span className={figmaCheck.ok === false ? 'text-bad' : ''}>{figmaCheck.detail}</span>} changed={has(view.overrides.figma, 'enabled')} onReset={() => reset('figma.enabled')}>
+        <Toggle label="figma" on={view.effective.figma.enabled} onChange={(v) => save({ figma: { enabled: v } })} />
+      </Row>
+    </Panel>
+    <Panel
+      title="Slack"
+      hint={
+        <>
+          <span className={slackCheck.ok === false ? 'text-bad' : ''}>{slackCheck.detail}</span>. Each part is its own switch. Tokens live in .env (SLACK_BOT_TOKEN, SLACK_USER_TOKEN, SLACK_USER_ID); see .env.example for the scopes.
+        </>
+      }
+    >
+      <Row label="Read linked threads" hint="A Slack thread linked in a ticket goes to the lane as context, like Linear comments." changed={has(so, 'threads')} onReset={() => reset('slack.threads')}>
+        <Toggle label="slack threads" on={sl.threads} onChange={(v) => save({ slack: { threads: v } })} />
+      </Row>
+      <Row label="Notifications by DM" hint="What Telegram sends you, also as Slack DMs from the bot, with links to the PR, Linear and the app." changed={has(so, 'notify')} onReset={() => reset('slack.notify')}>
+        <Toggle label="slack notifications" on={sl.notify} onChange={(v) => save({ slack: { notify: v } })} />
+      </Row>
+      <Row label="Post PRs ready for review" hint="When a PR of yours leaves draft (here or on GitHub), post it to this channel with its size, checks and Greptile score." changed={has(so, 'announce') || has(so, 'channel')} onReset={() => (reset('slack.announce'), reset('slack.channel'))}>
+        <TextField label="slack channel" value={sl.channel} placeholder="#web-prs or C0123…" width="w-40" onSave={(v) => save({ slack: { channel: v } })} />
+        <Toggle label="announce PRs" on={sl.announce} onChange={(v) => save({ slack: { announce: v } })} />
+      </Row>
+      <Row label="Roll call" hint="Your PRs waiting for review (link, Linear id, CI, who is asked or owes a re-review) go to Slack at these times, as the bot. If nothing changed since the last post in that channel, it skips. Times are this computer's. Post one by hand from Today." changed={has(so, 'rollCalls') || has(so, 'reviewSummaryAt')} onReset={() => (reset('slack.rollCalls'), reset('slack.reviewSummaryAt'))}>
+        <RollCalls value={sl.rollCalls?.length ? sl.rollCalls : sl.reviewSummaryAt ? [{ at: sl.reviewSummaryAt, days: 'weekdays' }] : []} fallback={sl.channel} onSave={(rollCalls) => save({ slack: { rollCalls, reviewSummaryAt: '' } })} />
+      </Row>
+      <Row label="Auto nudge" hint="Reviewers to nudge get the DM by themselves (as you, the same text Nudge drafts): only in their working hours on weekdays (8:00 to 19:00 their time), at most once a day each, after the PR has waited 4 hours. Telegram tells you who was nudged. Needs SLACK_USER_TOKEN." changed={has(so, 'autoNudge')} onReset={() => reset('slack.autoNudge')}>
+        <Toggle label="auto nudge" on={sl.autoNudge ?? false} onChange={(v) => save({ slack: { autoNudge: v } })} />
+      </Row>
+      <Row label="Summarize my mentions" hint="Every few minutes, threads where someone tagged you are read and summarized with what you should do, on Today and by DM and Telegram. Each summary is a small model call." changed={has(so, 'mentions')} onReset={() => reset('slack.mentions')}>
+        <Toggle label="slack mentions" on={sl.mentions} onChange={(v) => save({ slack: { mentions: v } })} />
+      </Row>
+      <NightShiftRows value={sl.nightShift} changed={has(so, 'nightShift')} reset={() => reset('slack.nightShift')} save={(nightShift) => save({ slack: { nightShift } })} />
+    </Panel>
     <motion.div variants={stagger} className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
       <Card title="Telegram bot" check={health.telegram} extra={health.telegram.bot}>
         <Button disabled={busy !== null} onClick={run('bot', () => controls.restartBot())}>
@@ -458,8 +667,14 @@ function Integrations({ health, busy, run }: { health: Health; busy: string | nu
             Copy URL
           </Button>
         )}
+        <ConfirmButton
+          label="Sign out phones"
+          confirm="Sign out every phone and browser"
+          onConfirm={() => void controls.revokeSessions().then((r) => notice({ title: `Signed out ${r.revoked} session${r.revoked === 1 ? '' : 's'}`, detail: 'Telegram /tunnel gives a new one-time link', tone: 'accent' }), (e: unknown) => failed(e))}
+        />
       </Card>
     </motion.div>
+    </>
   )
 }
 
@@ -610,5 +825,193 @@ function StopEverything({ health, busy, run }: { health: Health; busy: string | 
         <ConfirmButton variant="ghost" label="Stop and shut down" confirm="Yes, shut down" disabled={busy !== null} onConfirm={() => void go(true)()} />
       </div>
     </motion.section>
+  )
+}
+
+// Install from mevo, sign in in your terminal (it is interactive), or copy either command.
+function EngineSetupBar({ id, status }: { id: string; status: NonNullable<Health['lanes']['engines']>[number] }) {
+  const setup = ENGINE_SETUP[id]
+  const [job, setJob] = useState<EngineSetupStatus | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+  useEffect(() => {
+    if (job?.state !== 'installing') return
+    const t = setInterval(async () => {
+      const all = await controls.engineSetup().catch(() => [])
+      const mine = all.find((s) => s.id === id)
+      if (mine) setJob(mine)
+      if (mine && mine.state !== 'installing') await controls.probe().catch(() => undefined)
+    }, 1500)
+    return () => clearInterval(t)
+  }, [job?.state, id])
+  if (!setup) return null
+  const needsInstall = !status.installed
+  const needsLogin = status.installed && status.signedIn === false
+  const copy = async (cmd: string) => {
+    try {
+      await navigator.clipboard.writeText(cmd)
+      setCopied(cmd)
+      setTimeout(() => setCopied(null), 1500)
+    } catch {
+      setNote(cmd)
+    }
+  }
+  const term = async (step: 'install' | 'login') => {
+    try {
+      const r = await controls.engineTerminal(id, step)
+      setNote(step === 'login' ? `Opened ${r.app}. Sign in there${setup.loginHint ? ` (${setup.loginHint})` : ''}, then press Check again.` : `Opened ${r.app} with the install running.`)
+    } catch (err) {
+      failed(err)
+    }
+  }
+  const install = async () => {
+    try {
+      setJob((await controls.installEngine(id)).status)
+    } catch (err) {
+      failed(err)
+    }
+  }
+  const cmd = (c: string) => (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <Mono className="truncate rounded bg-sunk px-1.5 py-0.5 text-fg-2">{c}</Mono>
+      <button type="button" className="shrink-0 text-accent-fg hover:underline" onClick={() => void copy(c)}>
+        {copied === c ? 'copied' : 'copy'}
+      </button>
+    </span>
+  )
+  if (!needsInstall && !needsLogin && job?.state !== 'failed') {
+    return setup.login ? (
+      <span className="w-full pl-[22px] text-[11px] text-dim">
+        <button type="button" className="hover:text-fg" onClick={() => void term('login')}>
+          Sign in again
+        </button>
+        {note && <span className="ml-2 text-fg-2">{note}</span>}
+      </span>
+    ) : null
+  }
+  return (
+    <div className="ml-[22px] flex w-full flex-col gap-2 rounded-md border border-[#3d3522] bg-[#1a1812] px-3 py-2.5">
+      <span className="text-[11.5px] text-warn">{needsInstall ? 'Turned on but not installed on this Mac: its roles fall back to another engine until you install it.' : 'Installed but not signed in.'}</span>
+      {needsInstall && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-muted">1. Install</span>
+          {cmd(setup.install)}
+          <ConfirmButton
+            variant="default"
+            disabled={job?.state === 'installing'}
+            label={job?.state === 'installing' ? 'Installing…' : 'Install'}
+            confirm={`Run "${setup.install}" from ${installSource(setup.install)}`}
+            onConfirm={() => void install()}
+          />
+          <Button variant="ghost" onClick={() => void term('install')}>
+            In my terminal
+          </Button>
+        </div>
+      )}
+      {setup.login && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-muted">{needsInstall ? '2.' : '1.'} Sign in</span>
+          {cmd(setup.login)}
+          <Button variant={needsLogin ? 'primary' : 'default'} disabled={needsInstall && job?.state !== 'done'} onClick={() => void term('login')}>
+            Sign in in my terminal
+          </Button>
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" onClick={() => void controls.probe()}>
+          Check again
+        </Button>
+        {job?.state === 'done' && <span className="text-[11px] text-ok">Installed.{setup.login ? ' Now sign in.' : ''}</span>}
+        {job?.state === 'failed' && <span className="text-[11px] text-bad">The install failed. Try it in your terminal.</span>}
+      </div>
+      {job && job.output.trim() && job.state !== 'done' && <pre className="max-h-32 overflow-auto rounded bg-sunk px-2 py-1.5 font-mono text-[10.5px] whitespace-pre-wrap text-muted">{job.output.trim().split('\n').slice(-12).join('\n')}</pre>}
+      {note && <span className="text-[11px] text-fg-2">{note}</span>}
+    </div>
+  )
+}
+
+// where an install command downloads from, said before it runs
+function installSource(cmd: string): string {
+  const url = /https?:\/\/([^/\s]+)/.exec(cmd)?.[1]
+  if (url) return url
+  if (/^npm i/.test(cmd)) return `npm (${cmd.split(' ').pop() ?? ''})`
+  return 'your shell'
+}
+
+// The Roll call times: each with its days and, if not the default one, its channel.
+function RollCalls({ value, fallback, onSave }: { value: readonly RollCall[]; fallback: string; onSave: (v: RollCall[]) => void }) {
+  const [list, setList] = useState<RollCall[]>(() => [...value])
+  useEffect(() => setList([...value]), [value])
+  const field = 'rounded-md border border-line-2 bg-bg px-2 py-1 text-xs text-fg outline-none focus:border-accent'
+  const change = (i: number, patch: Partial<RollCall>) => setList((l) => l.map((x, j) => (j === i ? { ...x, ...patch } : x)))
+  const dirty = JSON.stringify(list) !== JSON.stringify(value)
+  return (
+    <div className="flex flex-col gap-1.5">
+      {list.map((rc, i) => (
+        <div key={i} className="flex flex-wrap items-center gap-1.5">
+          <input type="time" aria-label="time" value={rc.at} onChange={(e) => change(i, { at: e.target.value })} className={`${field} w-[7.5rem]`} />
+          <select aria-label="days" value={rc.days} onChange={(e) => change(i, { days: e.target.value as RollCall['days'] })} className={field}>
+            <option value="weekdays">Weekdays</option>
+            <option value="daily">Every day</option>
+          </select>
+          <input aria-label="channel" value={rc.channel ?? ''} placeholder={fallback || '#channel'} onChange={(e) => change(i, e.target.value.trim() ? { channel: e.target.value } : { channel: '' })} className={`${field} w-36`} />
+          <button type="button" aria-label="remove this time" className="px-1 text-muted hover:text-bad" onClick={() => setList((l) => l.filter((_, j) => j !== i))}>
+            ✕
+          </button>
+        </div>
+      ))}
+      <div className="flex items-center gap-2">
+        {list.length < 6 && (
+          <button type="button" className="text-xs text-accent-fg hover:underline" onClick={() => setList((l) => [...l, { at: '09:00', days: 'weekdays' }])}>
+            + Add a time
+          </button>
+        )}
+        {dirty && (
+          <Button variant="primary" onClick={() => onSave(list.filter((x) => /^\d{2}:\d{2}$/.test(x.at)).map(({ channel, ...x }) => (channel?.trim() ? { ...x, channel: channel.trim() } : x)))}>
+            Save
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const NIGHT_DEFAULTS: NightShiftConfig = { enabled: false, mode: 'shadow', from: '22:00', to: '07:30', days: 'daily', followSlack: true, wake: [], dmAsMe: false }
+
+// Night Shift: when it runs, what the bot may post by itself, and what wakes you.
+function NightShiftRows({ value, changed, reset, save }: { value: Partial<NightShiftConfig> | undefined; changed: boolean; reset: () => void; save: (p: Partial<NightShiftConfig>) => void }) {
+  const ns = { ...NIGHT_DEFAULTS, ...value }
+  const field = 'rounded-md border border-line-2 bg-bg px-2 py-1 text-xs text-fg outline-none focus:border-accent'
+  return (
+    <>
+      <Row
+        label="Night Shift"
+        hint="While you are away, mevo reads your mentions and DMs, sorts them (FYI, it can answer from your tickets and PRs, needs you, urgent) and drafts what its bot would say, always labelled as your assistant. Post factual answers: it posts the answers it can give from your work, and once per thread a “noted, you will see this when back” for what needs you. It never writes as you, approves, merges or promises dates. When you are back you get the morning handoff on Today and Telegram. Needs the bot's chat:write and your token's im:history, im:read, users:read, users.profile:read."
+        changed={changed}
+        onReset={reset}
+      >
+        <Select label="night shift mode" value={ns.mode} options={[{ value: 'shadow', label: 'Drafts only' }, { value: 'facts', label: 'Post factual answers' }]} onChange={(v) => save({ mode: v as NightShiftConfig['mode'] })} />
+        <Toggle label="night shift" on={ns.enabled} onChange={(v) => save({ enabled: v })} />
+      </Row>
+      {ns.enabled && (
+        <>
+          <Row label="Away hours" hint="This computer's time. From after To crosses midnight. Outside them, your switch on Today still turns it on.">
+            <input type="time" aria-label="from" value={ns.from} onChange={(e) => /^\d{2}:\d{2}$/.test(e.target.value) && save({ from: e.target.value })} className={`${field} w-[7.5rem]`} />
+            <span className="text-xs text-muted">to</span>
+            <input type="time" aria-label="to" value={ns.to} onChange={(e) => /^\d{2}:\d{2}$/.test(e.target.value) && save({ to: e.target.value })} className={`${field} w-[7.5rem]`} />
+            <Select label="night shift days" value={ns.days} options={[{ value: 'daily', label: 'Every day' }, { value: 'weekdays', label: 'Weekdays' }]} onChange={(v) => save({ days: v as NightShiftConfig['days'] })} />
+          </Row>
+          <Row label="Follow my Slack status" hint="Also on while Slack shows you away, or your status is 🌙, “night shift” or “ooo”.">
+            <Toggle label="follow slack status" on={ns.followSlack} onChange={(v) => save({ followSlack: v })} />
+          </Row>
+          <Row label="Answer DMs from my account" hint="A DM is answered in that same conversation, from your account, always starting with “This is mevo, your assistant, writing from your account: you are on Night Shift”. In Post factual answers mode it answers questions about your work and, once per person, says the rest waits for you. Off: the bot answers them in their own DM with the bot.">
+            <Toggle label="answer DMs from my account" on={ns.dmAsMe} onChange={(v) => save({ dmAsMe: v })} />
+          </Row>
+          <Row label="Wake me for" hint="Messages with these words or names are urgent and reach you on Telegram right away, whatever the model thinks. Comma separated.">
+            <TextField label="wake words" value={ns.wake.join(', ')} placeholder="prod, down, dom" onSave={(v) => save({ wake: v.split(',').map((w) => w.trim()).filter(Boolean).slice(0, 20) })} />
+          </Row>
+        </>
+      )}
+    </>
   )
 }

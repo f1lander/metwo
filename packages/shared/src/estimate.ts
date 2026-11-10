@@ -1,4 +1,4 @@
-import type { StartChoice, Ticket, Triage } from './index.js'
+import type { StartChoice, Ticket, TicketEvent, Triage } from './index.js'
 
 // Estimates from your own history, no AI: every finished run (a `start` event up to the
 // `ready` / `no-change` that ended it) is a sample with its minutes and the lane turns'
@@ -132,9 +132,43 @@ export function estimateFor(history: History, t: Pick<Ticket, 'id' | 'labels'>, 
 // Engines that report no cost (Codex, Cursor on a plan): time and tokens only.
 export const reportsCost = (t: Pick<Ticket, 'engine'>): boolean => !/^(codex|cursor)/.test(t.engine ?? '')
 
-// When the current run started: the last `start`, `resume`, `answer` or comment-fix event.
+// An update from main is a run only when the lane merges locally ("merging main" … "merged N commit(s)").
+// The GitHub update-branch button runs no lane, so it neither starts nor ends one.
+const startsRun = (e: TicketEvent) => ['start', 'resume', 'answer', 'fix-comments'].includes(e.kind) || (e.kind === 'update' && /^merging /.test(e.message ?? ''))
+const endsRun = (e: TicketEvent) => ['ready', 'no-change', 'error', 'stop', 'merged'].includes(e.kind) || (e.kind === 'update' && /^merged /.test(e.message ?? ''))
+
+// The current run: when it started and how long it waited on your answers. A question and its
+// answer stay inside the run, so the clock does not restart when you reply.
+export function currentRun(t: Ticket): { readonly start: string; readonly pausedMs: number } | null {
+  let start: string | null = null
+  let paused = 0
+  let waiting: string | null = null
+  for (const e of t.events) {
+    if (e.kind === 'question' && start) waiting = e.at
+    else if (e.kind === 'answer' && waiting) {
+      paused += ms(e.at) - ms(waiting)
+      waiting = null
+    } else if (startsRun(e)) {
+      if (!start) {
+        start = e.at
+        paused = 0
+      }
+    } else if (endsRun(e)) {
+      start = null
+      waiting = null
+    }
+  }
+  return start ? { start, pausedMs: paused } : null
+}
+
 export function runStartedAt(t: Ticket): string | null {
-  return [...t.events].reverse().find((e) => e.kind === 'start' || e.kind === 'resume' || e.kind === 'answer' || e.kind === 'fix-comments' || e.kind === 'update')?.at ?? null
+  return currentRun(t)?.start ?? null
+}
+
+// Minutes the current run has been working, not counting the wait for your answers.
+export function runMinutes(t: Ticket, now = Date.now()): number | null {
+  const r = currentRun(t)
+  return r ? Math.max(0, (now - ms(r.start) - r.pausedMs) / 60000) : null
 }
 
 // Spend so far in the current run: the lane turns that already reported a cost, plus the

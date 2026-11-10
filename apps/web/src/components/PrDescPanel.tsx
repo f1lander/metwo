@@ -121,12 +121,14 @@ export function PostToPr({ ticket: t, onClose }: { ticket: Ticket; onClose: () =
             }, null)}>
               Update the PR
             </Button>
-            <Button disabled={busy} onClick={() => void run(async () => {
-              await actions.visualPost(t)
-              await actions.descDiscard(t)
-            }, 'Posted as a comment instead.')}>
-              Comment instead
-            </Button>
+            {p.trigger !== 'checks' && (
+              <Button disabled={busy} onClick={() => void run(async () => {
+                await actions.visualPost(t)
+                await actions.descDiscard(t)
+              }, 'Posted as a comment instead.')}>
+                Comment instead
+              </Button>
+            )}
             <Button variant="ghost" disabled={busy} onClick={() => void run(() => actions.descDiscard(t), null).then(onClose)}>
               Discard
             </Button>

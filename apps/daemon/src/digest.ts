@@ -45,7 +45,7 @@ export function computeDigest(tickets: readonly Ticket[], now = new Date()): Dig
 export function formatDigest(d: Digest): string {
   const block = (title: string, items: readonly string[]) => (items.length ? `${title}\n${items.map((i) => `• ${i}`).join('\n')}` : null)
   const parts = [
-    '📋 metwo · today',
+    '📋 mevo · today',
     block(`✅ Closed (${d.closed.length})`, d.closed),
     block(`🙋 Waiting on you (${d.waiting.length})`, d.waiting),
     block(`⟳ Running (${d.running.length})`, d.running),

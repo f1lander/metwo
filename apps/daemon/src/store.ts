@@ -1,20 +1,49 @@
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import type { DaemonState, JournalEntry, PrReview, Settings, Ticket, TicketEvent, Triage } from '@ticketflow/shared'
+import { History } from './history.js'
+import type { DaemonState, JournalEntry, PrReview, Settings, Ticket, TicketEvent, Triage, SlackMention, NightShiftState, MascotStatus } from '@ticketflow/shared'
 
 // JSON file state. Good enough for one dev and a few dozen tickets; swap for sqlite later.
 export class Store extends EventEmitter {
   private state: DaemonState
   private readonly file: string
+  readonly history: History
 
   constructor(dataDir: string) {
     super()
-    mkdirSync(dataDir, { recursive: true })
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 })
     this.file = path.join(dataDir, 'state.json')
+    this.history = new History(dataDir)
     this.state = existsSync(this.file)
       ? (JSON.parse(readFileSync(this.file, 'utf8')) as DaemonState)
       : { tickets: {}, nextPortIndex: 0 }
+  }
+
+  // Closed tickets older than `days` keep a slim copy on the board; the full record goes to
+  // data/archive/<id>.json. Their PR comes back in full from GitHub if it is reopened.
+  compactClosed(days = 3, now = Date.now()): string[] {
+    const dir = path.join(path.dirname(this.file), 'archive')
+    const done: string[] = []
+    for (const t of Object.values(this.state.tickets)) {
+      if ((t.status !== 'done' && t.status !== 'skipped') || t.archived || now - Date.parse(t.updatedAt) < days * 86_400_000) continue
+      mkdirSync(dir, { recursive: true, mode: 0o700 })
+      writeFileSync(path.join(dir, `${t.id}.json`), JSON.stringify(t), { mode: 0o600 })
+      const { conversation: _c, commentTriage: _t, ci: _ci, previewQa: _q, testPlan: _p, humanTests: _h, localChecks: _l, quickCheck: _k, unpushed: _u, ...rest } = t
+      const slim: Ticket = {
+        ...rest,
+        archived: new Date(now).toISOString(),
+        journal: (t.journal ?? []).map(({ body: _b, ...j }) => j),
+        ...(t.pr ? { pr: { ...t.pr, comments: [], body: '', ...(t.pr.greptile ? { greptile: { ...t.pr.greptile, findings: [] } } : {}) } } : {}),
+      }
+      this.state = { ...this.state, tickets: { ...this.state.tickets, [t.id]: slim } }
+      done.push(t.id)
+    }
+    if (done.length) {
+      this.persist()
+      for (const id of done) this.emit('ticket', this.state.tickets[id])
+    }
+    return done
   }
 
   snapshot(): DaemonState {
@@ -47,6 +76,11 @@ export class Store extends EventEmitter {
     const events = event
       ? [...current.events, { ...event, at: new Date().toISOString() }]
       : current.events
+    if (event) this.history.record({ type: 'event', ticket: id, kind: event.kind, message: event.message })
+    if (changes.status && changes.status !== current.status) {
+      this.history.record({ type: 'status', ticket: id, from: current.status, to: changes.status, lane: changes.lane ?? current.lane ?? null, engine: changes.engine ?? current.engine ?? null, labels: current.labels })
+      if (changes.status === 'done' || changes.status === 'skipped') this.emit('closed', id)
+    }
     return this.upsert({ ...current, ...changes, events })
   }
 
@@ -54,6 +88,8 @@ export class Store extends EventEmitter {
     const current = this.state.tickets[id]
     if (!current) return undefined
     const journal = [...(current.journal ?? []), { ...entry, at: new Date().toISOString() }]
+    this.emit('journal', id, entry)
+    this.history.record({ type: 'journal', ticket: id, kind: entry.kind, title: entry.title, ...(entry.meta ? { meta: entry.meta } : {}), ...(entry.body ? { body: entry.body.slice(0, 2000) } : {}) })
     return this.upsert({ ...current, journal })
   }
 
@@ -77,13 +113,65 @@ export class Store extends EventEmitter {
     const current = this.state.reviews?.[id]
     if (!current) throw new Error(`unknown review ${id}`)
     const journal = note ? [...(current.journal ?? []), { ...note, at: new Date().toISOString() }] : current.journal
+    if (note || (changes.status && changes.status !== current.status)) this.history.record({ type: 'review', review: id, ...(changes.status ? { status: changes.status } : {}), ...(note ? { title: note.title, ...(note.meta ? { meta: note.meta } : {}) } : {}) })
     return this.putReview({ ...current, ...changes, ...(journal ? { journal } : {}) })
   }
 
   spend(what: string, cost: number): void {
     const list = [...(this.state.spend ?? []), { at: new Date().toISOString(), what, cost: Number(cost.toFixed(4)) }].slice(-1000)
+    this.history.record({ type: 'spend', what, cost: Number(cost.toFixed(4)) })
     this.state = { ...this.state, spend: list }
     this.persist()
+  }
+
+  slackMentions(): readonly SlackMention[] {
+    return this.state.slackMentions ?? []
+  }
+
+  // newest first, the last 100 kept
+  // every open mention to done, in one write
+  doneAllMentions(): number {
+    const list = this.state.slackMentions ?? []
+    const open = list.filter((m) => m.status !== 'done').length
+    if (!open) return 0
+    const next = list.map((m) => (m.status === 'done' ? m : { ...m, status: 'done' as const }))
+    this.state = { ...this.state, slackMentions: next }
+    this.persist()
+    this.emit('slack', next)
+    return open
+  }
+
+  putSlackMention(m: SlackMention): SlackMention {
+    const rest = (this.state.slackMentions ?? []).filter((x) => x.id !== m.id)
+    const list = [m, ...rest].sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 100)
+    this.state = { ...this.state, slackMentions: list }
+    this.persist()
+    this.emit('slack', list)
+    return m
+  }
+
+  mascot(): MascotStatus {
+    return this.state.mascot ?? { energy: 1, enabled: true, coffee: true }
+  }
+
+  setMascot(patch: Partial<MascotStatus>): MascotStatus {
+    const next = { ...this.mascot(), ...patch }
+    this.state = { ...this.state, mascot: next }
+    this.persist()
+    this.emit('mascot', next)
+    return next
+  }
+
+  nightShift(): NightShiftState {
+    return this.state.nightShift ?? { active: false, since: null, reason: null, manual: null, handoff: null }
+  }
+
+  setNightShift(patch: Partial<NightShiftState>): NightShiftState {
+    const next = { ...this.nightShift(), ...patch }
+    this.state = { ...this.state, nightShift: next }
+    this.persist()
+    this.emit('night', next)
+    return next
   }
 
   setTriage(entries: Readonly<Record<string, Triage>>): void {
@@ -103,6 +191,7 @@ export class Store extends EventEmitter {
 
   setSettings(changes: Settings): void {
     this.state = { ...this.state, settings: deepMerge(this.state.settings ?? {}, changes) as Settings }
+    this.history.record({ type: 'settings', set: changes })
     this.persist()
     this.emit('settings', this.state.settings)
   }
@@ -114,6 +203,7 @@ export class Store extends EventEmitter {
     let node: Record<string, unknown> | undefined = next
     for (const p of parts.slice(0, -1)) node = node?.[p] as Record<string, unknown> | undefined
     if (node) delete node[parts.at(-1) as string]
+    this.history.record({ type: 'settings', reset: key })
     this.state = { ...this.state, settings: next as Settings }
     this.persist()
     this.emit('settings', this.state.settings)
@@ -126,9 +216,22 @@ export class Store extends EventEmitter {
     return base + index
   }
 
+  // Written at most every 500ms (the file is megabytes; patches come in bursts), and at exit
+  private timer: ReturnType<typeof setTimeout> | null = null
+  private exitHook = false
   private persist(): void {
+    if (!this.exitHook) {
+      this.exitHook = true
+      process.on('exit', () => this.flush())
+    }
+    this.timer ??= setTimeout(() => this.flush(), 500)
+  }
+
+  flush(): void {
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
     const tmp = `${this.file}.tmp`
-    writeFileSync(tmp, JSON.stringify(this.state, null, 2))
+    writeFileSync(tmp, JSON.stringify(this.state), { mode: 0o600 })
     renameSync(tmp, this.file)
   }
 }

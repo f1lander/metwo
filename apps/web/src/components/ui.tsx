@@ -1,6 +1,7 @@
-import type { Triage } from '@ticketflow/shared'
+import type { LinearPerson, Ticket, Triage } from '@ticketflow/shared'
 import { AnimatePresence, type HTMLMotionProps, motion } from 'motion/react'
 import { type ReactNode, useEffect, useState } from 'react'
+import { API } from '../lib/api.js'
 import { useLabelColor } from '../lib/labels.js'
 
 type Variant = 'primary' | 'default' | 'ghost' | 'danger'
@@ -89,7 +90,7 @@ const TONES: Record<Tone, string> = {
 // Crossfades when its text changes, so a status flip reads as an event.
 export function Pill({ tone = 'neutral', children, className = '' }: { tone?: Tone; children: ReactNode; className?: string }) {
   return (
-    <motion.span layout="position" className={`inline-flex items-center overflow-hidden rounded-full border px-2 py-px text-[11px] whitespace-nowrap transition-colors duration-300 ${TONES[tone]} ${className}`}>
+    <motion.span layout="position" className={`inline-flex shrink-0 items-center overflow-hidden rounded-full border px-2 py-px text-[11px] whitespace-nowrap transition-colors duration-300 ${TONES[tone]} ${className}`}>
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.span key={String(children)} initial={{ y: 8, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -8, opacity: 0 }} transition={{ duration: 0.22 }}>
           {children}
@@ -196,6 +197,18 @@ export function LabelDot({ name }: { name: string }) {
 const KIND_LABEL = { ui: 'UI', logic: 'logic', copy: 'copy', bug: 'bug', infra: 'infra', other: 'other' } as const
 
 // The AI's read of an issue: size and kind, green when autopilot can take it alone.
+// The readiness check on a ticket that has not started: ready, needs clarification or hold.
+export function ReadinessChip({ ticket: t }: { ticket: Ticket }) {
+  const r = t.readiness
+  if (!r) return t.readinessRunning && !t.readinessRunning.error ? <span className="animate-pulse rounded-full border border-line-2 px-2 py-px text-[11px] text-muted">reading…</span> : null
+  const [text, cls] = r.verdict === 'ready' ? ['ready', 'border-[#27463a] bg-[#16281f] text-ok'] : r.verdict === 'clarify' ? ['? clarify', 'border-[#3d3522] bg-[#1a1812] text-warn'] : ['⏸ hold', 'border-[#4a2a2f] bg-[#2a1a1d] text-bad']
+  return (
+    <span title={`${r.why}${r.questions.length ? `\n${r.questions.map((q) => `? ${q}`).join('\n')}` : ''}`} className={`inline-flex items-center gap-1 rounded-full border px-2 py-px text-[11px] whitespace-nowrap ${cls}`}>
+      {text} <span className="font-mono opacity-80">{r.confidence}%</span>
+    </span>
+  )
+}
+
 export function TriageChip({ triage: t }: { triage: Triage | undefined }) {
   if (!t) return null
   return (
@@ -206,6 +219,43 @@ export function TriageChip({ triage: t }: { triage: Triage | undefined }) {
       <span className="font-semibold">{t.size}</span>
       {KIND_LABEL[t.kind]}
       {t.easy && <span aria-label="easy">· easy</span>}
+    </span>
+  )
+}
+
+// A GitHub user's picture (fetched and cached by the daemon), or a Linear avatar URL. Falls back to initials
+// on a color picked from the name when there is none or it fails to load.
+export function Avatar({ login, src, name, size = 16, className = '' }: { login?: string | null; src?: string | null; name?: string; size?: number; className?: string }) {
+  const [broken, setBroken] = useState(false)
+  const label = name ?? login ?? '?'
+  const url = src ? (src.startsWith('/api/') ? `${API}${src}${src.includes('?') ? '' : `?s=${size * 2}`}` : src) : login ? `${API}/api/avatar/${encodeURIComponent(login)}?s=${size * 2}` : null
+  if (!url || broken) {
+    const hue = [...label].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 360, 7)
+    const initials = label.replace(/\[bot\]$/i, '').split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('') || '?'
+    return (
+      <span aria-hidden="true" className={`inline-flex shrink-0 items-center justify-center rounded-full font-medium text-white ${className}`} style={{ width: size, height: size, fontSize: Math.max(8, size * 0.42), background: `hsl(${hue} 45% 38%)` }}>
+        {initials}
+      </span>
+    )
+  }
+  return <img src={url} alt="" width={size} height={size} loading="lazy" referrerPolicy="no-referrer" onError={() => setBroken(true)} className={`shrink-0 rounded-full bg-raised ring-1 ring-line ${className}`} style={{ width: size, height: size }} />
+}
+
+// A Linear user's picture: their GitHub avatar when they linked GitHub in Linear, else the Linear one
+// (Linear uploads go through the daemon, which has the API key).
+export function linearAvatar(p: LinearPerson | null | undefined): string | null {
+  if (!p) return null
+  if (p.github && /^\d+$/.test(p.github)) return `/api/avatar/id/${p.github}`
+  if (p.avatar?.startsWith('https://uploads.linear.app/')) return `/api/linear-file?u=${encodeURIComponent(p.avatar)}`
+  return p.avatar
+}
+
+// Avatar and name together, for authors, reviewers and assignees.
+export function Person({ login, name, src, size = 16, className = '' }: { login?: string | null; name?: string; src?: string | null; size?: number; className?: string }) {
+  return (
+    <span className={`inline-flex min-w-0 items-center gap-1.5 ${className}`} title={name ?? login ?? ''}>
+      <Avatar login={login ?? null} src={src ?? null} {...(name ? { name } : {})} size={size} />
+      <span className="truncate">{name ?? login}</span>
     </span>
   )
 }

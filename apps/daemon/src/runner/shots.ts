@@ -43,8 +43,8 @@ export async function uploadShots(cwd: string, ticketId: string, files: readonly
     let id = gistId
     if (!id) {
       const readme = path.join(tmp, `${ticketId}.md`)
-      writeFileSync(readme, `Screenshots for ${ticketId}, uploaded by metwo for its draft PR.\n`)
-      const { stdout } = await sh('gh', ['gist', 'create', readme, '--desc', `metwo · ${ticketId} screenshots`], cwd)
+      writeFileSync(readme, `Screenshots for ${ticketId}, uploaded by mevo for its draft PR.\n`)
+      const { stdout } = await sh('gh', ['gist', 'create', readme, '--desc', `mevo · ${ticketId} screenshots`], cwd)
       id = stdout.trim().split('\n').pop()?.split('/').pop()
       if (!id) throw new Error(`gh gist create returned no URL: ${stdout}`)
     }

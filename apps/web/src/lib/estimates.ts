@@ -16,10 +16,13 @@ export function setTickets(next: readonly Ticket[]): void {
   for (const l of listeners) l()
 }
 
+// One history for every card: built once per ticket list, not once per card that asks
+let cached: { all: unknown; triage: unknown; history: History } | null = null
 export function useHistory(): History {
   const all = useSyncExternalStore(subscribe, () => tickets)
   const triage = useTriageMap()
-  return useMemo(() => buildHistory(all, triage), [all, triage])
+  if (cached?.all !== all || cached.triage !== triage) cached = { all, triage, history: buildHistory(all, triage) }
+  return cached.history
 }
 
 export type Estimates = Readonly<Record<StartChoice, Estimate | null>>
@@ -72,3 +75,9 @@ export function writeConfirmRule(rule: ConfirmRule): void {
 }
 
 export const SENSITIVE = /security|protocol|contract|auth|payment|wallet|migration/i
+
+// ids of the tickets on the board, for "already on the board" in the find sheet
+export function useBoardIds(): ReadonlySet<string> {
+  const all = useSyncExternalStore(subscribe, () => tickets)
+  return useMemo(() => new Set(all.map((t) => t.id)), [all])
+}

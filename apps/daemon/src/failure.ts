@@ -56,6 +56,10 @@ export function explainFailure(message: string, logFile?: string): Failure {
   if (has(all, 'spawn claude enoent', 'command not found: claude')) {
     return { code: 'claude_missing', title: 'claude CLI not found', detail: message, hint: 'The daemon was started from a shell without claude on PATH. Start it from a login shell.', retryable: true }
   }
+  const missing = /spawn (\S+) ENOENT/i.exec(message)?.[1]
+  if (missing) {
+    return { code: 'engine_missing', title: `${missing} is enabled but not installed`, detail: message, hint: `mevo now skips it and uses the next engine. The work is in the worktree: Finish the checks to carry on without redoing it, or turn ${missing} off in Settings → Engines.`, retryable: true }
+  }
   if (has(message, 'daemon restarted mid-run')) {
     return { code: 'daemon_restart', title: 'Daemon restarted mid-run', detail: 'The lane was killed when the daemon stopped. Everything it did is still in the worktree.', hint: 'Retry to start over, or open the worktree and keep going by hand.', retryable: true }
   }

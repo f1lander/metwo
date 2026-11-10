@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { Ticket } from '@ticketflow/shared'
 
 const GROUPS: readonly { title: string; statuses: readonly Ticket['status'][] }[] = [
-  { title: 'Stopped mid-run (Resume in metwo, or see RESUME.md in the flow dir)', statuses: ['stopped'] },
+  { title: 'Stopped mid-run (Resume in mevo, or see RESUME.md in the flow dir)', statuses: ['stopped'] },
   { title: 'Waiting for you', statuses: ['needs_input', 'review_ready', 'no_change', 'failed'] },
   { title: 'Queued', statuses: ['queued'] },
   { title: 'Running', statuses: ['running'] },

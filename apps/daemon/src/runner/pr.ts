@@ -166,7 +166,7 @@ export class PrPublisher {
     const stamp = new Date().toLocaleString('sv-SE', { hour12: false }).slice(0, 16)
     const newShots = swapped.unmatched.length ? `\n\n**Retaken after \`${short}\`**\n\n${mediaBlock(swapped.unmatched)}` : ''
     let body = swapped.unmatched.length && /^## Screenshots/m.test(swapped.body)
-      ? swapped.body.replace(/(^## Screenshots[^\n]*\n)([\s\S]*?)(?=\n## |\n*Ref: |(?![\s\S]))/m, (_m, h: string, rest: string) => `${h}${rest.trimEnd()}${newShots}\n`)
+      ? swapped.body.replace(/(^## Screenshots[^\n]*\n)([\s\S]*?)(?=\n## |\n*(?:Ref:|Fixes) [A-Z]|(?![\s\S]))/m, (_m, h: string, rest: string) => `${h}${rest.trimEnd()}${newShots}\n`)
       : swapped.body
     let commentUrl: string | null = null
     if (input.comment) {
@@ -226,15 +226,17 @@ function swapImages(body: string, attached: readonly PrMedia[]): { body: string;
   const unmatched: PrMedia[] = []
   for (const m of attached) {
     const alt = prettyShot(m.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const linked = new RegExp(`<a href="[^"]+"><img src="[^"]+"(\\s+width="\\d+"\\s+alt="${alt}")>`, 'g')
     const re = new RegExp(`<img src="[^"]+"(\\s+width="\\d+"\\s+alt="${alt}")`, 'g')
-    if (re.test(out)) out = out.replace(re, `<img src="${m.url}"$1`)
+    if (linked.test(out)) out = out.replace(linked, `<a href="${m.url}"><img src="${m.url}"$1>`)
+    else if (re.test(out)) out = out.replace(re, `<img src="${m.url}"$1`)
     else unmatched.push(m)
   }
   return { body: out, unmatched }
 }
 
-function addUpdateLine(body: string, line: string): string {
+export function addUpdateLine(body: string, line: string): string {
   if (body.includes('## Updates')) return body.replace(/## Updates\n/, `## Updates\n${line}\n`)
-  const withRef = body.replace(/\n*(Ref: [A-Z]+-\d+)\s*$/, `\n\n## Updates\n${line}\n\n$1`)
+  const withRef = body.replace(/\n*((?:Ref:|Fixes) [A-Z]+-\d+)\s*$/, `\n\n## Updates\n${line}\n\n$1`)
   return withRef !== body ? withRef : `${body.trimEnd()}\n\n## Updates\n${line}\n`
 }
