@@ -159,7 +159,8 @@
       })
       .join('')
     const tx = (cls) => (s.pendingTx ? `<div class="tx ${cls}"><div class="name">The test wallet wants to send a transaction</div><div class="btns" style="margin-left:0"><button class="b p" data-act="approve">Approve</button><button class="b bad" data-act="reject">Reject</button></div></div>` : '')
-    const foot = `<div class="foot"><span class="count">${done} of ${s.steps.length} done</span><button class="b ${s.current ? '' : 'p'}" data-act="finish">Finish</button></div>`
+    const auto = s.autorun && s.current ? `<button class="b" data-act="autorun" title="mevo plays the steps the lane wrote; it stops at a step you judge">${s.autorunning ? 'Running…' : 'Run the steps for me'}</button>` : ''
+    const foot = `<div class="foot"><span class="count">${done} of ${s.steps.length} done</span>${auto}<button class="b ${s.current ? '' : 'p'}" data-act="finish">Finish</button></div>`
     const logo = '<span class="logo">mev<b>o</b></span>'
     if (mobile()) {
       // a phone: a pill with the step at hand, the steps in a bottom sheet

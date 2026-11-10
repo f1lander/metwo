@@ -269,7 +269,7 @@ export type CommentMoment = 'review_ready' | 'no_change' | 'pr_opened' | 'qa' | 
 
 // Every key except repo.path and linear.teamKey has a default, so a config file only
 // needs what differs. Objects merge key by key; arrays and values replace.
-export const SHOT_DEFAULTS: ShotRules = { max: 8, mobile: 'layout', before: 'changed', video: 'interactions', stories: 4 }
+export const SHOT_DEFAULTS: ShotRules = { mode: 'lane', speed: 1.5, max: 8, mobile: 'layout', before: 'changed', video: 'interactions', stories: 4 }
 
 const DEFAULTS: Config = {
   repo: {

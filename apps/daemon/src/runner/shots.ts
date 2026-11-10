@@ -4,6 +4,7 @@ import path from 'node:path'
 import { ghLogin } from './github.js'
 import { git, sh } from './shell.js'
 import { readVisual } from './visual.js'
+import { readRun } from './visual-plan.js'
 
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i
 const VIDEO = /\.(mp4|mov|webm)$/i
@@ -32,7 +33,7 @@ export function listMedia(flowDir: string): readonly { readonly file: string; re
 // What goes into the PR: the shots VISUAL.json's checks name, each after its before shot, in the
 // order of the checks, up to `max`; then one video. With no named shots (an old run, no
 // VISUAL.json), the first `max` shots by name.
-export function prMedia(flowDir: string, rules: { readonly max: number; readonly video: 'interactions' | 'off' }): readonly { readonly file: string; readonly kind: 'image' | 'video' }[] {
+export function prMedia(flowDir: string, rules: { readonly max: number; readonly video: 'interactions' | 'off'; readonly mode?: 'lane' | 'steps' }): readonly { readonly file: string; readonly kind: 'image' | 'video' }[] {
   const all = listMedia(flowDir)
   const images = all.filter((m) => m.kind === 'image')
   const byName = new Map(images.map((m) => [path.basename(m.file), m]))
@@ -41,11 +42,17 @@ export function prMedia(flowDir: string, rules: { readonly max: number; readonly
     const m = byName.get(name)
     if (m && !named.some((n) => n.file === m.file)) named.push({ file: m.file, kind: 'image' })
   }
-  for (const c of readVisual(flowDir)?.checks ?? []) {
-    if (!c.shot) continue
-    add(c.shot.replace(/(^|[-_])after(?=[-_.])/i, '$1before'))
-    add(c.shot)
+  const pair = (name: string) => {
+    add(name.replace(/(^|[-_])after(?=[-_.])/i, '$1before'))
+    add(name)
   }
+  // steps mode: every shot of mevo's run, in step order (each viewport, before first), then the
+  // lane's story shots
+  const run = rules.mode === 'steps' ? readRun(flowDir, 'after') : null
+  if (run) {
+    for (const s of run.steps) for (const f of s.shots) pair(f)
+    for (const m of images) if (/-story-/i.test(path.basename(m.file))) add(path.basename(m.file))
+  } else for (const c of readVisual(flowDir)?.checks ?? []) if (c.shot) pair(c.shot)
   const shots = (named.length ? named : images).slice(0, Math.max(0, rules.max))
   const video = rules.video === 'off' ? [] : all.filter((m) => m.kind === 'video').slice(0, 1)
   return [...shots, ...video]

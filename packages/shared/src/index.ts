@@ -927,6 +927,11 @@ export const CONTEXT_INFO: { readonly [K in ContextBlock]: { readonly label: str
   feedback: { label: 'Past PR feedback', what: 'What reviewers said before about the files touched' },
 }
 export interface ShotRules {
+  // lane: the lane takes the screenshots itself · steps: it writes VISUAL-PLAN.json and mevo runs
+  // it in a browser with the test wallet, takes the shots and records the video
+  readonly mode: 'lane' | 'steps'
+  // video speed after the waits are cut (steps mode)
+  readonly speed: number
   // screenshots in all, stories and before shots included; also what reaches the PR
   readonly max: number
   // layout: mobile only when the layout changes

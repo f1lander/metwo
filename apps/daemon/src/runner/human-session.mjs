@@ -18,6 +18,8 @@ const rpc = []
 const clips = []
 let pendingTx = false
 let finished = false
+let autorunning = false
+let connected = false
 
 // on a phone: Chrome over adb (the daemon records the screen itself). On the Mac: a Chromium
 // window; METWO_CDP_PORT lets tests drive the same browser over CDP.
@@ -39,7 +41,7 @@ if (cfg.android) {
 const current = () => steps.find((s) => s.status === 'pending')
 // the app's tab: never MetaMask's own windows or the Web Store
 const page = () => context.pages().filter((p) => !p.isClosed() && !/^chrome-extension:|chromewebstore/.test(p.url())).at(-1)
-const state = () => ({ title: cfg.title, run: cfg.run, mode: cfg.android ? `${cfg.mode} · phone` : cfg.mode, steps: steps.map(({ id, title, how, expect, status, check, detail, go }) => ({ id, title, how, expect, status, manual: check.kind === 'manual', detail, go })), current: current()?.id ?? null, pendingTx })
+const state = () => ({ title: cfg.title, run: cfg.run, mode: cfg.android ? `${cfg.mode} · phone` : cfg.mode, steps: steps.map(({ id, title, how, expect, status, check, detail, go }) => ({ id, title, how, expect, status, manual: check.kind === 'manual', detail, go })), current: current()?.id ?? null, pendingTx, autorun: Boolean(cfg.doSteps && wallets.length), autorunning })
 const render = async () => {
   for (const p of context.pages()) await p.evaluate((s) => window.__mevoRender?.(s), state()).catch(() => {})
 }
@@ -54,6 +56,7 @@ await context.exposeBinding('__mevoAction', async (_src, a) => {
   if (a.type === 'mark') await mark(a.id, a.status, 'manual', a.note)
   if (a.type === 'approve' || a.type === 'reject') await walletDecision(a.type)
   if (a.type === 'finish') await finish()
+  if (a.type === 'autorun') void autorun()
   await render()
 })
 await context.addInitScript({ content: readFileSync(new URL('./human-page.js', import.meta.url), 'utf8') })
@@ -159,6 +162,7 @@ await render()
 if (cfg.wallet) {
   out({ type: 'note', text: 'Connecting the test wallet…' })
   const miss = await connectWallet(p0).catch((e) => e.message)
+  connected = !miss
   out({ type: 'note', text: miss ? `Connect the wallet yourself: pick "Headless Web3 Provider" in the connect dialog (${miss})` : `Test wallet connected: ${walletAddress}` })
 }
 
@@ -228,6 +232,52 @@ const timer = setInterval(async () => {
   }
 }, 1000)
 
+// "Run the steps for me": the lane's Playwright lines for each step, in order, while you watch.
+// It stops at a step with no lines or one only you can judge, and on any error.
+async function autorun() {
+  if (autorunning || !cfg.doSteps) return
+  autorunning = true
+  await render()
+  const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
+  const p = page()
+  const goto = (to) => p.goto(new URL(to, cfg.url).toString(), { waitUntil: 'load' })
+  const approveTx = async (ms = 30_000) => {
+    const until = Date.now() + ms
+    while (Date.now() < until) {
+      if (wallets.some((w) => w.getPendingRequestCount('eth_sendTransaction') > 0)) return walletDecision('approve')
+      await new Promise((r) => setTimeout(r, 300))
+    }
+    throw new Error('no transaction to approve')
+  }
+  try {
+    for (;;) {
+      const step = current()
+      const lines = step && cfg.doSteps[step.id]
+      if (!step || finished) break
+      if (step.go) await goto(step.go)
+      if (!lines) break
+      await Promise.race([new AsyncFunction('page', 'connect', 'approveTx', 'goto', lines)(p, async () => {
+        if (connected) return
+        const miss = await connectWallet(p)
+        if (miss) throw new Error(miss)
+        connected = true
+      }, approveTx, goto), new Promise((_, rej) => setTimeout(() => rej(new Error('the step took longer than 45s')), 45_000))])
+      if (step.check.kind === 'manual') break
+      const until = Date.now() + 15_000
+      while (current() === step && Date.now() < until) await new Promise((r) => setTimeout(r, 300))
+      if (current() === step) {
+        out({ type: 'note', text: `Ran "${step.title}" but its check didn't show; over to you` })
+        break
+      }
+    }
+  } catch (e) {
+    out({ type: 'error', text: `Run the steps: ${String(e?.message ?? e).split('\n')[0].slice(0, 300)}` })
+  } finally {
+    autorunning = false
+    await render()
+  }
+}
+
 async function finish() {
   if (finished) return
   finished = true
@@ -248,5 +298,6 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   try {
     const c = JSON.parse(line)
     if (c.type === 'stop') void finish()
+    if (c.type === 'autorun') void autorun()
   } catch {}
 })

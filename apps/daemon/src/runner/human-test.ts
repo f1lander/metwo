@@ -12,6 +12,7 @@ import type { Runner } from './index.js'
 import { startHandProxy } from './hand-proxy.js'
 import { portOpen, stackUp, waitForDev } from './local-checks.js'
 import { git, sh } from './shell.js'
+import { readVisualPlan, testPlanFrom } from './visual-plan.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const KINDS: readonly TestCheckKind[] = ['url', 'text', 'selector', 'rpc', 'tx', 'clipboard', 'manual']
@@ -47,6 +48,14 @@ export class HumanTests {
     const sha = await git(['rev-parse', 'HEAD'], t.worktree)
     const stat = await git(['diff', '--stat', `origin/${c.repo.baseBranch}...HEAD`], t.worktree).catch(() => '')
     const flow = this.flowDir(id)
+    // the lane already wrote the test as steps: those are the plan, no model call
+    const visual = readVisualPlan(flow)
+    if (visual) {
+      const plan = testPlanFrom(visual, sha)
+      this.store.patch(id, { testPlan: plan })
+      this.store.journal(id, { kind: 'note', title: `Hand test plan from the visual plan · ${plan.steps.length} steps`, body: plan.steps.map((s, i) => `${i + 1}. ${s.title} (${s.check.kind})`).join('\n') })
+      return plan
+    }
     const summary = path.join(t.worktree, 'ARM-SUMMARY.md')
     const prompt = `Write the steps a developer follows to test ticket ${id} ("${t.title}") by hand in the running app, so a person confirms it works for real. mevo watches the browser while they do it and ticks each step it can see happen.
 
@@ -208,7 +217,10 @@ Reply with only this JSON: {"where":"chrome, mock or preview","whereWhy":"","ste
     const cur = this.run(id, runId) as HumanTestRun
     this.store.journal(id, { kind: 'note', title: `Hand test started · ${mode}${phone ? ` · ${phone.model}` : ''}`, body: `${url} · ${plan.steps.length} steps · commit ${cur.sha.slice(0, 9)}` })
     const config = path.join(dir, `${runId}.json`)
-    writeFileSync(config, JSON.stringify({ url, mode, run: runId, steps: plan.steps, outDir, wallet, title: `${id} · ${t.title}`, ...(phone ? { android: { serial: phone.serial } } : {}) }))
+    // the visual plan's Playwright lines, for "Run the steps for me" with the test wallet
+    const visual = mode === 'mock' && plan.engine === 'the visual plan' ? readVisualPlan(this.flowDir(id)) : null
+    const doSteps = visual && visual.steps.length === plan.steps.length ? Object.fromEntries(plan.steps.flatMap((s, i) => (visual.steps[i]?.do ? [[s.id, visual.steps[i]?.do]] : []))) : null
+    writeFileSync(config, JSON.stringify({ url, mode, run: runId, steps: plan.steps, outDir, wallet, title: `${id} · ${t.title}`, ...(doSteps && Object.keys(doSteps).length ? { doSteps } : {}), ...(phone ? { android: { serial: phone.serial } } : {}) }))
 
     const child = spawn(process.execPath, [path.join(dir, 'session.mjs'), config], { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'], env: process.env })
     const rec = phone ? this.phones.record(phone.serial, runId) : null

@@ -29,6 +29,9 @@ import { failedSummary, runLocalChecks } from './local-checks.js'
 import { type PullResult, pullPrBranch } from './pull.js'
 import { writeRecord } from './record.js'
 import { readVisual } from './visual.js'
+import { cutClip } from './clip.js'
+import { baseCheckout, beforeKey, markRunInVisual, planFile, readRun, readVisualPlan, type RunReport, runDir, runPlan, type VisualPlan, verdictPrompt } from './visual-plan.js'
+import { appFor, startApp } from './app-server.js'
 import { prSize, readyHold, securityHits, securityLens, sizeLine } from './quality.js'
 import { figmaLinks, type FigmaFrame, figmaSection } from '../figma.js'
 import { looksVisual } from '../classifier.js'
@@ -711,7 +714,8 @@ export class Runner {
       cpSync(shots, prev, { recursive: true })
     }
     const port = ticket.port ?? this.store.allocatePort(this.cfg.pipeline.portBase)
-    const prompt = visualCheckPrompt(this.cfg, ticket, flowDir, port)
+    const plan = this.cfg.shots.mode === 'steps' ? readVisualPlan(flowDir) : null
+    let prompt = visualCheckPrompt(this.cfg, ticket, flowDir, port)
     const prevStatus = ticket.status
     this.tasks.set(id, { task: 'visual', from: prevStatus })
     this.store.patch(id, { status: 'running' }, { kind: 'review', message: 'visual check' })
@@ -719,6 +723,14 @@ export class Runner {
     const signal = this.begin(id)
     try {
       const head = await git(['rev-parse', 'HEAD'], ticket.worktree)
+      // steps mode: mevo re-runs the plan (no model), then a model only judges the new shots
+      if (plan) {
+        const run = await runPlan({ cfg: this.cfg, worktree: ticket.worktree, flowDir, plan, prefix: 'after', port: port + 900, stage: (s) => this.progress(ticket, 'stage', s), signal })
+        this.checkStopped(id)
+        this.journalRun(id, run)
+        await this.cutVideo(id, run, plan)
+        prompt = verdictPrompt(this.cfg, ticket, flowDir, run, plan, false)
+      }
       const role = this.resolve(this.cfg.roles.visual, null, this.cfg.models.review.model) ?? this.resolve('claude', null, this.cfg.models.review.model)
       if (!role) throw new Error('no engine for the visual check')
       const result = await role.engine.run({
@@ -1998,8 +2010,130 @@ ${t.summary ? `What the PR does (the author's summary):\n${t.summary.slice(0, 30
       await this.reviewPass(ticket, wt, impl.engine.id)
     }
 
+    if (!quick && this.cfg.shots.mode === 'steps') await this.visualSteps(id, wt)
+
     if (quick) this.readQuickCheck(id)
     await this.finishRun(id, ticket, wt, impl.engine.id, round, followUp, readSummary, openPr, quick)
+  }
+
+  // Steps mode: mevo runs the lane's VISUAL-PLAN.json, the lane fixes what failed and judges the
+  // shots, and mevo runs it once more when the code or the plan changed.
+  private async visualSteps(id: string, wt: Worktree): Promise<void> {
+    const plan = readVisualPlan(wt.flowDir)
+    if (!plan) {
+      if (!readVisual(wt.flowDir)) this.store.journal(id, { kind: 'note', title: 'No visual plan', body: 'The lane wrote neither VISUAL-PLAN.json nor VISUAL.json, so there are no screenshots for this round.' })
+      return
+    }
+    this.pausePoint(id, 'the visual plan')
+    const ticket = this.store.get(id) as Ticket
+    const port = (ticket.port ?? this.cfg.pipeline.portBase) + 900
+    const stage = (s: string) => this.progress(ticket, 'stage', s)
+    const signal = this.signalOf(id)
+    let run: RunReport
+    try {
+      run = await runPlan({ cfg: this.cfg, worktree: wt.path, flowDir: wt.flowDir, plan, prefix: 'after', port, stage, ...(signal ? { signal } : {}) })
+    } catch (error) {
+      this.checkStopped(id)
+      const why = error instanceof Error ? error.message : String(error)
+      this.store.journal(id, { kind: 'failure', title: 'The visual plan could not run', body: `${why}\n\nThe lane takes the screenshots itself this time.` })
+      await this.laneTurn(id, `mevo could not run your visual plan (${why.slice(0, 300)}). Take the screenshots yourself instead, following these rules, then write ${path.join(wt.flowDir, 'VISUAL.json')}.\n\n${visualCheckPrompt(this.cfg, ticket, wt.flowDir, ticket.port ?? port)}`, 'Visual check by the lane')
+      return
+    }
+    this.checkStopped(id)
+    this.journalRun(id, run)
+    if (this.cfg.shots.before !== 'never' && plan.steps.some((s) => s.shot?.before)) await this.beforeShots(id, wt, plan)
+    const head = await git(['rev-parse', 'HEAD'], wt.path).catch(() => '')
+    const planText = readFileSync(planFile(wt.flowDir), 'utf8')
+    await this.laneTurn(id, verdictPrompt(this.cfg, ticket, wt.flowDir, run, plan, true), 'Visual verdict')
+    const changed = (await git(['rev-parse', 'HEAD'], wt.path).catch(() => '')) !== head || (existsSync(planFile(wt.flowDir)) ? readFileSync(planFile(wt.flowDir), 'utf8') : '') !== planText
+    if (!run.ok && changed) {
+      const again = readVisualPlan(wt.flowDir) ?? plan
+      try {
+        run = await runPlan({ cfg: this.cfg, worktree: wt.path, flowDir: wt.flowDir, plan: again, prefix: 'after', port, stage, ...(signal ? { signal } : {}) })
+        this.journalRun(id, run, true)
+      } catch (error) {
+        this.store.journal(id, { kind: 'failure', title: 'The visual plan could not run again', body: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    markRunInVisual(wt.flowDir, run)
+    await this.cutVideo(id, run, readVisualPlan(wt.flowDir) ?? plan)
+  }
+
+  // the run's video, cut to its steps (the waits drop out) and sped up, as the PR's clip. Only
+  // when a step interacts (a "do"); looking at pages needs no video.
+  private async cutVideo(id: string, run: RunReport, plan?: VisualPlan | null): Promise<void> {
+    if (!run.video || this.cfg.shots.video === 'off') return
+    if (plan && !plan.steps.some((s) => s.do)) return
+    const flowDir = this.flowDir(id)
+    const from = path.join(runDir(flowDir), run.prefix, run.video)
+    if (!existsSync(from)) return
+    const videos = path.join(flowDir, 'videos')
+    rmSync(videos, { recursive: true, force: true })
+    const clip = await cutClip(from, path.join(videos, '01-visual-plan.mp4'), run.steps.filter((s) => s.status !== 'skipped'), this.cfg.shots.speed).catch((e: unknown) => ({ file: '', error: e instanceof Error ? e.message : String(e) }))
+    if ('error' in clip) this.store.journal(id, { kind: 'note', title: 'Video kept uncut', body: `${clip.error}. The raw video of the run is attached instead.` })
+    else this.store.journal(id, { kind: 'note', title: `Video of the steps · ${clip.seconds}s at ${clip.speed.toFixed(1)}x` })
+  }
+
+  // Before shots: the steps that ask for one, run on a checkout of the base branch. Once per
+  // plan (they don't change with the code); one ticket at a time on that checkout.
+  private baseLock: Promise<unknown> = Promise.resolve()
+  private async beforeShots(id: string, wt: Worktree, plan: VisualPlan): Promise<void> {
+    const ticket = this.store.get(id) as Ticket
+    if (this.cfg.shots.before === 'bugs' && !ticket.labels.some((l) => /bug/i.test(l))) return
+    const key = beforeKey(plan)
+    const keyFile = path.join(runDir(wt.flowDir), 'before.key')
+    if (existsSync(keyFile) && readFileSync(keyFile, 'utf8') === key && readRun(wt.flowDir, 'before')) return
+    const stage = (s: string) => this.progress(ticket, 'stage', s)
+    const job = this.baseLock.then(async () => {
+      const base = await baseCheckout(this.cfg, stage)
+      const wanted = plan.app ? this.cfg.e2e?.apps?.find((a) => a.name === plan.app) : await appFor(this.cfg, wt.path)
+      const app = await startApp(this.cfg, base, (ticket.port ?? this.cfg.pipeline.portBase) + 950, stage, wanted ?? null)
+      try {
+        return await runPlan({ cfg: this.cfg, worktree: base, flowDir: wt.flowDir, plan, prefix: 'before', port: 0, stage, app, ...(this.signalOf(id) ? { signal: this.signalOf(id) as AbortSignal } : {}) })
+      } finally {
+        app.stop()
+      }
+    })
+    this.baseLock = job.catch(() => undefined)
+    try {
+      const run = await job
+      writeFileSync(keyFile, key)
+      this.journalRun(id, run)
+    } catch (error) {
+      this.checkStopped(id)
+      this.store.journal(id, { kind: 'note', title: 'No before shots this time', body: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  private journalRun(id: string, run: RunReport, again = false): void {
+    const passed = run.steps.filter((s) => s.status === 'passed').length
+    this.store.journal(id, {
+      kind: 'review',
+      title: `Visual plan${again ? ' again' : ''}${run.prefix === 'before' ? ' on the base code' : ''} · ${passed}/${run.steps.length} steps passed · ${run.steps.reduce((n, s) => n + s.shots.length, 0)} screenshot(s)`,
+      body: run.steps.map((s, i) => `${s.status === 'passed' ? '✓' : s.status === 'failed' ? '✕' : '–'} ${i + 1}. ${s.title}${s.error ? ` · ${s.error}` : ''}`).join('\n'),
+    })
+  }
+
+  // One resumed turn of the implementer, outside the lane's flow (the visual verdict)
+  private async laneTurn(id: string, prompt: string, title: string): Promise<void> {
+    const ticket = this.store.get(id) as Ticket
+    const impl = this.implementer(ticket)
+    const resume = ticket.sessionId && (ticket.sessionEngine ?? 'claude') === impl.engine.id ? ticket.sessionId : undefined
+    const flowDir = this.flowDir(id)
+    const effort = this.stepEffort('visual')
+    this.progress(ticket, 'stage', `${title.toLowerCase()} on ${impl.engine.label}`)
+    const result = await impl.engine.run({
+      cwd: ticket.worktree as string,
+      prompt: resume ? prompt : `You are checking the work on ${id} in this worktree. Read ${path.join(flowDir, 'brief.md')} and ARM-SUMMARY.md first.\n\n${prompt}`,
+      model: impl.model,
+      effort,
+      logFile: path.join(flowDir, 'logs', 'visual.jsonl'),
+      ...(resume ? { resume } : {}),
+      signal: this.signalOf(id),
+      onLine: (kind, line) => this.progress(ticket, kind, line),
+    })
+    this.checkStopped(id)
+    this.store.journal(id, { kind: 'run', title: `${title} · ${impl.engine.label}`, body: result.text.slice(0, 3000), meta: { model: `${result.model ?? impl.model}/${effort}`, ...(result.costUsd ? { cost: Number(result.costUsd.toFixed(2)) } : {}) } })
   }
 
   // What the quick fix asks you to look at, from QUICK-CHECK.md

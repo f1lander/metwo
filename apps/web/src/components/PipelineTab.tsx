@@ -142,6 +142,9 @@ export function PipelineTab({ health, view, busy, run, save, reset, tickets }: {
           <Select label="visual check" value={e.roles.visual} options={engineOptions} onChange={(v) => save({ roles: { visual: v } })} />
         </Row>
         {tuning('visual')}
+        <Row label="Who takes the screenshots" hint="Lane: the lane drives the browser and shoots while it works. Steps: the lane writes the test as steps (VISUAL-PLAN.json); mevo runs them with the test wallet, takes the shots and records the video, and the lane fixes what failed and judges the shots. The same steps start the hand test." changed={has(o.shots, 'mode')} onReset={() => reset('shots.mode')}>
+          <Segmented label="who takes the screenshots" value={e.shots.mode} options={['lane', 'steps'] as const} onChange={(v) => save({ shots: { mode: v } })} />
+        </Row>
         <Row label="Screenshots at most" hint="Stories and before shots included. The lane plans them from the acceptance criteria, and only the ones VISUAL.json names reach the PR, in that order." changed={has(o.shots, 'max')} onReset={() => reset('shots.max')}>
           <NumberField label="screenshots at most" min={1} value={e.shots.max} onSave={(n) => n !== null && save({ shots: { max: Math.min(40, Math.round(n)) } })} />
         </Row>

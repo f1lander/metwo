@@ -76,6 +76,44 @@ Save them as PNG into ${path.join(flowDir, 'shots')}/ (never inside the worktree
 if the Playwright tool writes elsewhere).`
 }
 
+// Steps mode: the lane writes the test as steps and mevo runs them (visual-plan.ts)
+function stepsSection(cfg: Config, flowDir: string): string {
+  const { max, mobile, before, video } = cfg.shots ?? SHOT_DEFAULTS
+  const shots = path.join(flowDir, 'shots')
+  return `## Visual plan: the test as steps (mevo takes the screenshots)
+Don't take screenshots of the app yourself and don't write VISUAL.json yet. When nothing visible
+changes, write only VISUAL.json with "verdict": "not_applicable" and the reason. Otherwise, once
+the code is done, write ${path.join(flowDir, 'VISUAL-PLAN.json')}: 3 to 8 steps from opening the app to the last
+acceptance criterion you can see. mevo runs them in a headless browser on the app from this
+worktree${cfg.e2e ? ' (the local e2e stack, with the test wallet: account 0 of the test mnemonic, already funded on the fork)' : ''}, takes the
+screenshots the steps ask for${video === 'off' ? '' : ' and records one video of the run'}, then shows you the result to judge.
+\`\`\`json
+{
+  "app": "${cfg.e2e?.apps?.[0]?.name ?? 'app'}",
+  "steps": [
+    { "id": "s1", "title": "Connect the wallet", "do": "await connect()", "check": { "kind": "rpc", "value": "eth_requestAccounts" } },
+    { "id": "s2", "title": "Open the renew modal on a name in grace", "go": "/test-grace.eth",
+      "do": "await page.getByRole('button', { name: 'Renew' }).click()",
+      "expect": "One expiry banner, under the title",
+      "check": { "kind": "text", "value": "Renew test-grace.eth" },
+      "shot": { "viewports": ["desktop", "mobile"], "before": true }, "proves": "AC1" },
+    { "id": "s3", "title": "Renew for 1 year", "do": "await page.getByRole('button', { name: 'Next' }).click(); await approveTx()",
+      "check": { "kind": "tx" }, "shot": { "viewports": ["desktop"] }, "proves": "AC2" }
+  ]
+}
+\`\`\`
+- "go": a route to open first. "do": Playwright lines run with \`page\`, \`connect()\` (the test
+  wallet through the app's connect dialog), \`approveTx()\` (approves the next transaction) and
+  \`goto(route)\`. Prefer role and text locators; the repo's e2e helpers show what works.
+- "check": how mevo knows the step worked: url, text, selector, rpc (a wallet call), tx, or manual.
+- "shot": only on steps that prove a criterion you can see. At most ${max} screenshots in all.
+  ${{ layout: 'Add "mobile" only for states whose layout changes.', always: 'Use "desktop" and "mobile".', never: 'Desktop only.' }[mobile]}
+  ${{ changed: '"before": true only for a state whose look changed (a fixed bug, a restyle): mevo shoots it on the base code too.', bugs: '"before": true only when the ticket is a visible bug.', never: 'No before shots.' }[before]}
+- "expect": what the screenshot should show; you will judge the shot against it.
+Use routes and data that exist on the fork, or create them in earlier steps. Story screenshots
+are still yours, saved as PNG into ${shots}/ as NN-story-<Story>-<state>.png.`
+}
+
 function browserSection(cfg: Config, port: number): string {
   const e2e = cfg.e2e
   const stack = e2e ? `${e2e.notes} Start it with \`${e2e.up}\` if it is not running.` : "If the app needs a backend, a signed-in user or test data, follow the repo's README or e2e docs to get there."
@@ -169,7 +207,7 @@ another worktree may be bound there)
 
 `),
     block('browser', 'Browser check', on('browser') ? `${browserSection(cfg, port)}\n\n` : '', 'browser'),
-    block('visual', 'Screenshots and visual verdict', `${shotsSection(cfg, flowDir)}
+    block('visual', 'Screenshots and visual verdict', (cfg.shots ?? SHOT_DEFAULTS).mode === 'steps' ? stepsSection(cfg, flowDir) : `${shotsSection(cfg, flowDir)}
 
 Then write ${path.join(flowDir, 'VISUAL.json')}: your honest verdict on the visual check. The
 operator reads it in the app before pushing, so never claim a check you did not perform:
@@ -208,7 +246,7 @@ If your diff adds or changes a component that renders UI in ${cfg.repo.path.spli
   the ticket touches should have its own story.
 
 ` : '', 'storybook'),
-    block('video', 'Video', on('video') && cfg.shots?.video !== 'off' ? `## Short video, only when a still can't show it
+    block('video', 'Video', on('video') && cfg.shots?.video !== 'off' && cfg.shots?.mode !== 'steps' ? `## Short video, only when a still can't show it
 Record one clip only when the change is an interaction a screenshot can't show: a flow across
 screens, an animation, hover or focus behaviour. No video for layout, copy, styling or anything
 the screenshots already prove.
