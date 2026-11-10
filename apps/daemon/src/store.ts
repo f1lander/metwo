@@ -46,6 +46,25 @@ export class Store extends EventEmitter {
     return done
   }
 
+  // the full record of an archived ticket (the board keeps a slim copy)
+  archivedRecord(id: string): Ticket | undefined {
+    const file = path.join(path.dirname(this.file), 'archive', `${path.basename(id)}.json`)
+    try {
+      return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Ticket) : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  // gone from the board and the state (replays you delete)
+  remove(id: string): void {
+    if (!this.state.tickets[id]) return
+    const { [id]: _gone, ...tickets } = this.state.tickets
+    this.state = { ...this.state, tickets }
+    this.persist()
+    this.emit('removed', id)
+  }
+
   snapshot(): DaemonState {
     return this.state
   }

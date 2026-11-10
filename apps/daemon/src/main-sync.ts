@@ -32,14 +32,14 @@ export class MainSync {
       return
     }
     let behind = 0
-    for (const t of this.store.byStatus(...OPEN)) if ((await this.check(t, base)) > 0) behind++
+    for (const t of this.store.byStatus(...OPEN)) if (!t.replay && ((await this.check(t, base)) > 0)) behind++
     this.onResult?.(true, behind ? `${behind} branch(es) behind ${this.config().repo.baseBranch}` : `all branches up to date with ${this.config().repo.baseBranch}`)
   }
 
   // One ticket right away, when GitHub reports its PR conflicting before the next tick.
   async checkOne(id: string): Promise<void> {
     const t = this.store.get(id)
-    if (!t?.worktree || !OPEN.includes(t.status)) return
+    if (!t?.worktree || t.replay || !OPEN.includes(t.status)) return
     const base = `origin/${this.config().repo.baseBranch}`
     if (Date.now() - this.fetchedAt > 60_000) {
       await git(['fetch', 'origin', this.config().repo.baseBranch], this.config().repo.path).catch(() => undefined)

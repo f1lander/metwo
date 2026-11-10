@@ -645,6 +645,12 @@ export function startServer(port: number, host: string, rootDir: string, store: 
   })
   app.get('/api/settings', (c) => c.json(controls.settings()))
   app.get('/api/pipeline', (c) => c.json(controls.pipeline()))
+  app.post('/api/tickets/:id/replay', async (c) => c.json({ ok: true, ticket: await runner.startReplay(c.req.param('id')) }))
+  app.get('/api/tickets/:id/replays', async (c) => c.json(await runner.replays(c.req.param('id'))))
+  app.post('/api/tickets/:id/replay/delete', async (c) => {
+    await runner.deleteReplay(c.req.param('id'))
+    return c.json({ ok: true })
+  })
   app.get('/api/tickets/:id/prompt/:step', async (c) => {
     const step = c.req.param('step')
     if (!Object.hasOwn(STEP_CONTEXT, step)) return c.json({ ok: false, error: `step: ${Object.keys(STEP_CONTEXT).join(', ')}` }, 400)
@@ -966,6 +972,7 @@ export function startServer(port: number, host: string, rootDir: string, store: 
         }, 300)
       }
       const onReview = (review: PrReview) => void push({ type: 'review', review })
+      const onRemoved = (id: string) => void push({ type: 'removed', id })
       const onLine = (id: string, line: LiveLine) => void push({ type: 'live', id, line })
       const onLabels = (labelColors: Record<string, string>) => void push({ type: 'labels', labelColors })
       const onTriage = (triage: Record<string, Triage>) => void push({ type: 'triage', triage })
@@ -979,6 +986,7 @@ export function startServer(port: number, host: string, rootDir: string, store: 
       store.on('triage', onTriage)
       store.on('ticket', onTicket)
       store.on('review', onReview)
+      store.on('removed', onRemoved)
       live.on('line', onLine)
       stream.onAbort(() => {
         store.off('night', onNight)
@@ -989,6 +997,7 @@ export function startServer(port: number, host: string, rootDir: string, store: 
         store.off('ticket', onTicket)
         if (flush) clearTimeout(flush)
         store.off('review', onReview)
+        store.off('removed', onRemoved)
         live.off('line', onLine)
       })
       while (!stream.aborted) {

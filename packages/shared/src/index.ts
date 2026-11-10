@@ -129,6 +129,9 @@ export interface JournalEntry {
 
 export interface Ticket {
   readonly id: string // WEB-1780
+  // a replay: the same ticket run again from the same starting point with today's settings, never
+  // pushed or posted anywhere (REPLAY-<n>)
+  readonly replay?: { readonly of: string; readonly base: string; readonly cutoff: string | null; readonly settings: string; readonly note?: string }
   readonly uuid: string
   readonly title: string
   readonly description: string
@@ -966,6 +969,39 @@ export interface PromptPreview {
   readonly notes: readonly string[]
 }
 
+// One pass of the pipeline on a ticket, from the start to the first "ready" (or no change): what
+// it cost and what came out. For comparing a replay with the original.
+export interface PassMetrics {
+  readonly id: string
+  readonly status: string
+  // false while it runs, or when the record is gone (archived)
+  readonly complete: boolean
+  readonly cost: number | null
+  readonly tokens: number | null
+  // wall clock from the start to ready, and the time the lane itself ran
+  readonly minutes: number | null
+  readonly laneMinutes: number | null
+  readonly turns: number
+  readonly rounds: number
+  readonly linesAdded: number | null
+  readonly linesRemoved: number | null
+  readonly files: number | null
+  readonly filesTouched: readonly string[] | null
+  readonly supervisor: string | null
+  readonly localChecks: 'passed' | 'failed' | null
+  readonly visual: string | null
+  readonly shots: number | null
+  readonly videos: number | null
+  readonly settings?: string
+  readonly at?: string
+}
+export interface ReplayView {
+  readonly original: PassMetrics
+  readonly replays: readonly PassMetrics[]
+  // what a new replay would run with now
+  readonly settingsNow: string
+}
+
 // The pipeline, stage by stage, as it runs now (config file + Settings). For the Pipeline tab and docs.
 export type PipelineStageId = 'intake' | 'implement' | 'review' | 'beforePr' | 'pr' | 'followUps'
 export interface PipelineStep {
@@ -1199,6 +1235,7 @@ export type ServerEvent =
   | { readonly type: 'mascot'; readonly mascot: MascotStatus }
   | { readonly type: 'snapshot'; readonly state: DaemonState }
   | { readonly type: 'ticket'; readonly ticket: Ticket }
+  | { readonly type: 'removed'; readonly id: string }
   | { readonly type: 'review'; readonly review: PrReview }
   | { readonly type: 'live'; readonly id: string; readonly line: LiveLine }
 

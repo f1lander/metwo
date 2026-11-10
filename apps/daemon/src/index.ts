@@ -65,20 +65,26 @@ const linearSync = new LinearSync(() => runner.config, linear, store)
 // Telegram and Runner reference each other; the notifier object breaks the cycle.
 let telegram: Telegram
 const runner = new Runner(cfg, store, linear, {
+  // replays stay on this Mac: no Linear comments, no Telegram buttons that push
   reviewReady: async (t) => {
+    if (t.replay) return
     await telegram.notifier.reviewReady(t)
     await writer.comment('review_ready', t)
   },
-  needsInput: (t) => telegram.notifier.needsInput(t),
+  needsInput: async (t) => {
+    if (!t.replay) await telegram.notifier.needsInput(t)
+  },
   prOpened: async (t) => {
     await telegram.notifier.prOpened(t)
     await writer.comment('pr_opened', t)
   },
   failed: async (t) => {
+    if (t.replay) return
     await telegram.notifier.failed(t)
     await writer.comment('failed', t)
   },
   noChange: async (t) => {
+    if (t.replay) return
     await telegram.notifier.noChange(t)
     await writer.comment('no_change', t)
   },
@@ -723,7 +729,7 @@ async function main(): Promise<void> {
         store.journal(id, { kind: 'pr', title: `Posted to Slack ${where}`, meta: { url: t.prUrl ?? '' } })
         return where
       },
-      reviewSummary: () => reviewSummary(store.all()),
+      reviewSummary: () => reviewSummary(store.all().filter((t) => !t.replay)),
       postReviewSummary: async (text, to) => {
         const where = await slack.postReviewSummary(text, to)
         store.setSettings({ alerts: { [`reviewSummary:${new Date().toDateString()}`]: 1 } })
@@ -756,7 +762,7 @@ async function main(): Promise<void> {
   telegram.curate = curate
   telegram.learnings = learnings
   if (cfg.pipeline.digestAt) {
-    scheduleDaily(cfg.pipeline.digestAt, () => telegram.sendPlain(formatDigest(computeDigest(store.all()))))
+    scheduleDaily(cfg.pipeline.digestAt, () => telegram.sendPlain(formatDigest(computeDigest(store.all().filter((t) => !t.replay)))))
   }
   if (cfg.server.tunnel && env.dashboardToken) {
     const token = env.dashboardToken
@@ -839,7 +845,7 @@ async function main(): Promise<void> {
     const alerts = store.snapshot().settings?.alerts ?? {}
     for (const { key, channel } of rollCallsDue(sl, new Date(), alerts)) {
       store.setSettings({ alerts: { [key]: 1 } })
-      const text = reviewSummary(store.all())
+      const text = reviewSummary(store.all().filter((t) => !t.replay))
       if (!text) continue
       const hashKey = `rollCallLast:${channel}`
       const h = textHash(text)

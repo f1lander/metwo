@@ -29,7 +29,7 @@ export function MevoMascot({ state, route }: { state: DaemonState; route: Route 
   const say = (text: string) => setBubble({ text, key: Date.now() })
   const react = (s: MascotStateId) => setFlash({ state: s, key: Date.now() })
 
-  const tickets = Object.values(state.tickets)
+  const tickets = Object.values(state.tickets).filter((t) => !t.replay)
   const here = route.page === 'ticket' ? state.tickets[route.id] : undefined
   const isWorking = here ? working(here) : tickets.some((t) => t.status === 'running')
   const isAsking = here ? here.status === 'needs_input' : tickets.some((t) => t.status === 'needs_input')

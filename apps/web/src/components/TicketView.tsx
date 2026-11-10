@@ -1,4 +1,5 @@
 import { type AndroidDevice, type BudgetStatus, type Health, type LiveLine, openComments, type Ticket } from '@ticketflow/shared'
+import { ReplayCard } from './Replay.js'
 import { motion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { TELL_EVENT } from '../lib/mascot.js'
@@ -41,6 +42,7 @@ export function TicketView({
   principles,
   phones = [],
   mo = false,
+  replays = [],
 }: {
   ticket: Ticket
   live: readonly LiveLine[]
@@ -51,6 +53,8 @@ export function TicketView({
   phones?: readonly AndroidDevice[]
   // Mo is out: he is the Tell the agent button
   mo?: boolean
+  // this ticket's replays (REPLAY-n)
+  replays?: readonly Ticket[]
 }) {
   const [busy, setBusy] = useState(false)
   const [focus, setFocus] = useState(0)
@@ -174,6 +178,12 @@ export function TicketView({
           {t.worktree && !['assigned', 'queued', 'running'].includes(t.status) && (t.commits || t.pr || t.testPlan || t.humanTests?.length) && (
             <motion.div variants={rise}>
               <HandTestCard ticket={t} phones={phones} />
+            </motion.div>
+          )}
+
+          {(t.replay || t.events.some((e) => e.kind === 'start')) && (
+            <motion.div variants={rise}>
+              <ReplayCard ticket={t} replays={replays} />
             </motion.div>
           )}
 

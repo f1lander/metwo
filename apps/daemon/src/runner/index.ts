@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { diagnoseCi, rerunFailed } from './ci.js'
 import path from 'node:path'
-import { type BranchUpdateResult, type BudgetStatus, type CommentTriage, type ContextBlock, type Effort, type PromptPreview, type StepId, type StagePhase, type Lane, type LocalChecks, markdownSection, reviewerFollowUps, type MediaFile, openComments, type StartChoice, type SupervisionReport, type Ticket, type VisualReport } from '@ticketflow/shared'
+import { type BranchUpdateResult, type BudgetStatus, type CommentTriage, type ContextBlock, type Effort, type PromptPreview, type ReplayView, type StepId, type StagePhase, type Lane, type LocalChecks, markdownSection, reviewerFollowUps, type MediaFile, openComments, type StartChoice, type SupervisionReport, type Ticket, type VisualReport } from '@ticketflow/shared'
 import { regulatedEffort } from '../budget.js'
 import { type Config, ctxOn, effective } from '../config.js'
 import { enabledEngines, type Engine, type EngineId, parseEngineRef, type RunResult } from '../engines/index.js'
@@ -15,6 +15,7 @@ import type { Store } from '../store.js'
 import { reviewPrompt, stepInstructions, writeBrief } from './brief.js'
 import { contextSection, gatherContext } from './context.js'
 import { buildPreview } from './preview.js'
+import { filesTouched, passMetrics, settingsSummary, startPoint } from './replay.js'
 import { commentOnPr, editPrBody, existingPrUrl, fetchPrInfo, updateBranchOnGithub, ghLogin, livePrBody, markPrReady, prConversation, previewDeploy, pushBranch, replyToReviewComment, requestReviewers, requestSuggestedReviewers, resolveThread } from './github.js'
 import { claudeCommand, openTerminal } from './open-claude.js'
 import { addUpdateLine, PrPublisher } from './pr.js'
@@ -1212,6 +1213,72 @@ Reply in 1 to 3 short sentences, plain and friendly, no greeting, no sign-off, n
     }
   }
 
+  // A replay: the ticket run again from the point its original started, with today's settings,
+  // under its own id and branch. It never pushes, posts or moves anything in Linear.
+  async startReplay(id: string): Promise<Ticket> {
+    const o = this.store.get(id)
+    if (!o) throw new Error(`${id} is not on the board`)
+    if (o.replay) throw new Error(`${id} is a replay; replay ${o.replay.of} instead`)
+    const n = 1 + Math.max(0, ...this.store.all().map((t) => Number(/^REPLAY-(\d+)$/.exec(t.id)?.[1] ?? 0)))
+    const replayId = `REPLAY-${n}`
+    const start = await startPoint(this.cfg, o)
+    const now = new Date().toISOString()
+    const cutoff = o.events.find((e) => e.kind === 'start')?.at ?? null
+    this.store.upsert({
+      id: replayId,
+      uuid: o.uuid,
+      title: o.title,
+      description: o.description,
+      url: o.url,
+      branch: `replay/${o.id}-${n}`,
+      labels: o.labels,
+      priority: o.priority,
+      estimate: o.estimate,
+      linearState: o.linearState,
+      createdBy: o.createdBy,
+      seenAt: now,
+      updatedAt: now,
+      status: 'assigned',
+      decision: 'manual',
+      suggestedLane: o.lane ?? o.suggestedLane,
+      reason: `replay of ${o.id}`,
+      events: [],
+      journal: [],
+      ...(o.readiness ? { readiness: o.readiness } : {}),
+      ...(o.principles !== undefined ? { principles: o.principles } : {}),
+      replay: { of: o.id, base: start.base, cutoff, settings: settingsSummary(this.cfg), ...(start.note ? { note: start.note } : {}) },
+    } as Ticket)
+    this.store.journal(replayId, { kind: 'note', title: `Replay of ${o.id}`, body: `From ${start.base.slice(0, 9)}${start.note ? ` (${start.note})` : ''}, with: ${settingsSummary(this.cfg)}.${cutoff ? ` Linear comments up to ${cutoff.slice(0, 16).replace('T', ' ')}.` : ''}` })
+    this.store.journal(o.id, { kind: 'note', title: `Replay started: ${replayId}`, body: settingsSummary(this.cfg) })
+    this.enqueue(replayId, o.lane ?? 'lite')
+    this.pump()
+    return this.store.get(replayId) as Ticket
+  }
+
+  // The original's first pass next to each replay's
+  async replays(id: string): Promise<ReplayView> {
+    const o = this.store.get(id)
+    if (!o) throw new Error(`${id} is not on the board`)
+    const full = o.archived ? (this.store.archivedRecord(id) ?? o) : o
+    const original = passMetrics(full, this.flowDir(id), await filesTouched(this.cfg, o.branch))
+    const list = this.store.all().filter((t) => t.replay?.of === id).sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
+    const replays = await Promise.all(list.map(async (t) => passMetrics(t, this.flowDir(t.id), t.worktree && existsSync(t.worktree) ? await filesTouched(this.cfg, t.branch, t.worktree) : null)))
+    return { original, replays, settingsNow: settingsSummary(this.cfg) }
+  }
+
+  // A replay's worktree, branch and record, gone
+  async deleteReplay(id: string): Promise<void> {
+    const t = this.store.get(id)
+    if (!t?.replay) throw new Error(`${id} is not a replay`)
+    if (this.active.has(id)) await this.stop(id).catch(() => undefined)
+    const repo = this.cfg.repo.path
+    if (t.worktree) await git(['worktree', 'remove', '--force', t.worktree], repo).catch(() => '')
+    await git(['branch', '-D', t.branch], repo).catch(() => '')
+    rmSync(this.flowDir(id), { recursive: true, force: true })
+    this.store.journal(t.replay.of, { kind: 'note', title: `Replay deleted: ${id}` })
+    this.store.remove(id)
+  }
+
   // what a step's prompt would be for this ticket, without running anything
   async previewPrompt(id: string, step: StepId): Promise<PromptPreview> {
     const ticket = this.store.get(id)
@@ -1469,6 +1536,7 @@ Reply with only this JSON: {"answer":"markdown","toLane":null}`
   async push(id: string, opts: { force?: boolean } = {}): Promise<void> {
     const ticket = this.store.get(id)
     if (!ticket?.worktree) throw new Error(`${id} has no worktree`)
+    if (ticket.replay) throw new Error(`${id} is a replay of ${ticket.replay.of}: replays never push`)
     if (!opts.force && this.cfg.localChecks.enabled && ticket.localChecks?.status === 'fail' && ticket.localChecks.sha === (await git(['rev-parse', 'HEAD'], ticket.worktree).catch(() => ''))) {
       throw new Error(`Local checks failed on this commit (${failedSummary(ticket.localChecks)}). Fix them, or push anyway.`)
     }
@@ -1759,10 +1827,13 @@ ${t.summary ? `What the PR does (the author's summary):\n${t.summary.slice(0, 30
       if (!ticket) return
       // flip right away so the board and Telegram never show a started ticket as queued
       this.store.patch(id, { status: 'running' })
-      const wt = await ensureWorktree(this.cfg.repo, ticket.id, ticket.branch)
+      const wt = await ensureWorktree(this.cfg.repo, ticket.id, ticket.branch, ticket.replay?.base)
       const port = ticket.port ?? this.store.allocatePort(this.cfg.pipeline.portBase)
       this.progress(ticket, 'stage', 'reading the ticket')
-      const ctx = ctxOn(this.cfg, 'implement', 'linear') ? await gatherContext(this.linear, ticket, wt.flowDir) : { images: [], comments: [] }
+      const got = ctxOn(this.cfg, 'implement', 'linear') ? await gatherContext(this.linear, ticket, wt.flowDir) : { images: [], comments: [] }
+      // a replay sees the discussion as it was when the original started
+      const cutoff = ticket.replay?.cutoff
+      const ctx = cutoff ? { ...got, comments: got.comments.filter((c) => c.createdAt <= cutoff) } : got
       const design = await this.designContext(ticket, ctx.comments.map((c) => c.body), wt.flowDir)
       if (ticket.principles ?? this.cfg.principles.enabled) await syncPrinciples(this.cfg)
       const principles = ctxOn(this.cfg, 'implement', 'principles') ? principlesSection(this.cfg, ticket, playbookFor(ticket, this.store.snapshot().triage?.[id])) : { text: '', files: [], playbook: null }
@@ -1777,7 +1848,7 @@ ${t.summary ? `What the PR does (the author's summary):\n${t.summary.slice(0, 30
         })
       }
       this.store.patch(id, { status: 'running', worktree: wt.path, port }, { kind: 'start', message: `worktree ${wt.path} @ ${wt.base.slice(0, 8)}, port ${port}` })
-      if (this.cfg.linear.moveToInProgressOnStart || ticket.autopilot) {
+      if (!ticket.replay && (this.cfg.linear.moveToInProgressOnStart || ticket.autopilot)) {
         await this.linear.moveToState(ticket.uuid, this.cfg.linear.states.inProgress).then(
           () => this.store.patch(id, { linearState: this.cfg.linear.states.inProgress }),
           (e: unknown) => log.warn(`${id}: linear move failed`, e),
@@ -2195,6 +2266,12 @@ ${t.summary ? `What the PR does (the author's summary):\n${t.summary.slice(0, 30
     await this.noteUnpushed(id)
     const max = this.cfg.quality.maxLines
     if (size && max && size.lines > max) this.store.journal(id, { kind: 'note', title: `Bigger than your max: ${sizeLine(size)}`, body: `Your max is ${max} lines, so it won't be marked ready for review. Split it (the lane lists follow-ups in the summary), raise the max in Settings, or mark it ready anyway.` })
+    // a replay ends here: compared with its original, never pushed
+    if (updated.replay) {
+      this.store.journal(id, { kind: 'note', title: `Replay done · compare it on ${updated.replay.of}`, body: 'Nothing was pushed, posted or moved.' })
+      await this.notify.reviewReady(this.store.get(id) ?? updated)
+      return
+    }
     // red here would be red in CI: no PR until it is fixed or you press Push anyway
     if (local?.status === 'fail') {
       const why = `Local checks failed (${failedSummary(local)}). Fix them with the lane or push anyway.`

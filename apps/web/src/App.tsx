@@ -44,7 +44,9 @@ export function App() {
   }, [])
   const { health, refresh } = useHealth()
   const route = useRoute()
-  const tickets: readonly Ticket[] = useMemo(() => (state ? Object.values(state.tickets) : []), [state])
+  // replays live on their original's page, not on the board
+  const tickets: readonly Ticket[] = useMemo(() => (state ? Object.values(state.tickets).filter((t) => !t.replay) : []), [state])
+  const replaysOf = useMemo(() => (route.page === 'ticket' && state ? Object.values(state.tickets).filter((t) => t.replay?.of === route.id) : []), [state, route])
   useEffect(() => setTickets(tickets), [tickets])
   const reviews = state ? Object.values(state.reviews ?? {}).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt)) : []
   const toReview = reviewsWaiting(reviews)
@@ -95,7 +97,7 @@ export function App() {
               )
             ) : route.page === 'ticket' ? (
               state.tickets[route.id] ? (
-                <TicketView ticket={state.tickets[route.id] as Ticket} live={live[route.id] ?? []} {...(health?.lanes.models ? { models: health.lanes.models } : {})} engines={health?.lanes.engines ?? []} budget={health?.lanes.budget} principles={health?.lanes.principles} phones={health?.android?.devices ?? []} mo={state.mascot?.enabled ?? true} />
+                <TicketView ticket={state.tickets[route.id] as Ticket} live={live[route.id] ?? []} {...(health?.lanes.models ? { models: health.lanes.models } : {})} engines={health?.lanes.engines ?? []} budget={health?.lanes.budget} principles={health?.lanes.principles} phones={health?.android?.devices ?? []} mo={state.mascot?.enabled ?? true} replays={replaysOf} />
               ) : (
                 <div className="p-6 text-muted">
                   {route.id} is not tracked.{' '}

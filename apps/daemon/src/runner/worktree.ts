@@ -12,7 +12,7 @@ export interface Worktree {
 
 // One worktree per ticket at <repo>/.worktrees/<ID>, pinned to origin/<base> at creation.
 // Mirrors stage 0 of the wiki's implement-ticket spec so a "full" run can reuse it.
-export async function ensureWorktree(cfg: Config['repo'], ticketId: string, branch: string): Promise<Worktree> {
+export async function ensureWorktree(cfg: Config['repo'], ticketId: string, branch: string, startPoint?: string): Promise<Worktree> {
   const wtPath = path.join(cfg.path, cfg.worktreesDir, ticketId)
   const flowDir = path.join(cfg.path, cfg.worktreesDir, `${ticketId}-flow`)
   mkdirSync(path.join(flowDir, 'logs'), { recursive: true })
@@ -31,7 +31,7 @@ export async function ensureWorktree(cfg: Config['repo'], ticketId: string, bran
   } else if (remoteBranches.trim()) {
     await git(['worktree', 'add', '--track', '-b', branch, wtPath, `origin/${branch}`], cfg.path)
   } else {
-    await git(['worktree', 'add', '-b', branch, wtPath, base], cfg.path)
+    await git(['worktree', 'add', '-b', branch, wtPath, startPoint ?? base], cfg.path)
   }
   return { path: wtPath, flowDir, branch, base }
 }

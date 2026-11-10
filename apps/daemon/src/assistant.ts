@@ -55,7 +55,7 @@ export class Assistant {
     const cfg = this.d.runner.config
     const known = this.d.store.snapshot().triage ?? {}
     const view = await this.cycleView(true)
-    const mine = this.d.store.all().filter((t) => ['assigned', 'failed', 'no_change', 'skipped'].includes(t.status))
+    const mine = this.d.store.all().filter((t) => !t.replay && ['assigned', 'failed', 'no_change', 'skipped'].includes(t.status))
     const issues: (Pick<CycleIssue, 'id' | 'title' | 'labels' | 'estimate' | 'priorityLabel'> & { description: string; stamp: string })[] = [
       ...view.issues.map((i) => ({ id: i.id, title: i.title, labels: i.labels, estimate: i.estimate, priorityLabel: i.priorityLabel, description: i.description ?? '', stamp: i.updatedAt ?? '' })),
       ...mine.map((t) => ({ id: t.id, title: t.title, labels: t.labels, estimate: t.estimate, priorityLabel: String(t.priority), description: t.description, stamp: t.updatedAt })),
@@ -120,7 +120,7 @@ Answer with only this JSON, nothing before or after it: {"items":[{"id","size","
     const items: TodayItem[] = []
     const triage = this.d.store.snapshot().triage ?? {}
     const add = (i: Omit<TodayItem, 'key' | 'triage'>) => items.push({ ...i, key: `${i.group}-${i.id}-${items.length}`, ...(triage[i.id] ? { triage: triage[i.id] as Triage } : {}) })
-    for (const t of this.d.store.all()) {
+    for (const t of this.d.store.all().filter((x) => !x.replay)) {
       const pr = t.pr
       if (t.status === 'needs_input') add({ group: 'now', id: t.id, title: t.title, why: `asks: ${(t.question ?? '').replace(/\s+/g, ' ').slice(0, 140)}`, tone: 'warn', href: 'ticket' })
       else if (t.status === 'review_ready') add({ group: 'now', id: t.id, title: t.title, why: `ready for your review${t.supervision ? ` · supervisor ${t.supervision.verdict}` : ''}${t.visual ? ` · visual ${t.visual.verdict.replace('_', ' ')}` : ''}${t.autopilot?.held ? ` · autopilot held: ${t.autopilot.held}` : ''}`, tone: 'accent', href: 'ticket' })

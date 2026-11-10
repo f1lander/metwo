@@ -202,7 +202,7 @@ export class NightShift {
     const wake = this.c.wake.map((w) => w.trim().toLowerCase()).filter(Boolean)
     const woke = wake.find((w) => m.from.toLowerCase().includes(w) || m.text.toLowerCase().includes(w))
     const repo = this.projectRepo()
-    const work = workFacts(this.d.store.all(), Date.now(), repo)
+    const work = workFacts(this.d.store.all().filter((t) => !t.replay), Date.now(), repo)
     const raw = (await this.d.json(
       `You are mevo, the assistant bot of ${first}, a developer who is offline (asleep or away) until ~${this.c.to}. A message for ${first} came in on Slack (${m.channelName}). Decide what it needs and draft what you, as ${first}'s clearly labelled bot, would answer in the thread.
 

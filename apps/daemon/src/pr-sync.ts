@@ -85,7 +85,7 @@ export class PrSync {
     // anything with a worktree that may have a PR, including one opened outside mevo
     // closed here because GitHub closed the PR: watched two more weeks in case it is reopened there
     const watchClosed = (t: Ticket) => t.status === 'done' && Boolean(t.closedOnGithub) && Date.now() - Date.parse(t.closedOnGithub?.at ?? '') < 14 * 86_400_000
-    const all = this.store.all().filter((t) => t.worktree && (t.pr || t.prUrl || t.status === 'review_ready') && (!['done', 'skipped', 'assigned', 'queued'].includes(t.status) || watchClosed(t)))
+    const all = this.store.all().filter((t) => !t.replay && t.worktree && (t.pr || t.prUrl || t.status === 'review_ready') && (!['done', 'skipped', 'assigned', 'queued'].includes(t.status) || watchClosed(t)))
     const open = hot ? all.filter(isHot) : all
     if (open.length === 0) {
       if (!hot) this.onResult?.(true, 'no open PRs')

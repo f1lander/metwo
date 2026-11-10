@@ -1,4 +1,4 @@
-import type { LinearSyncRow, MascotStatus, SlackChannel, AskReply, Nudge, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, OpenPr, ReviewDepth, CiDiagnosis, FindScope, FoundIssue, LinearProject, EngineSetupStatus, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrinciplesUpdate, PrReview, HumanTestRun, PrView, Readiness, LiveLine, TestPlan, TestStep, ServerEvent, Settings, SettingsView, PipelineView, PromptPreview, StepId, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
+import type { LinearSyncRow, MascotStatus, SlackChannel, AskReply, Nudge, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, OpenPr, ReviewDepth, CiDiagnosis, FindScope, FoundIssue, LinearProject, EngineSetupStatus, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrinciplesUpdate, PrReview, HumanTestRun, PrView, Readiness, LiveLine, TestPlan, TestStep, ServerEvent, Settings, SettingsView, PipelineView, PromptPreview, ReplayView, StepId, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
 import { useCallback, useEffect, useState } from 'react'
 import { setLabelColors } from './labels.js'
 import { setTriage } from './triage.js'
@@ -87,6 +87,14 @@ export function useDaemon(): DaemonFeed {
             const batch = Object.fromEntries(pending)
             pending.clear()
             setState((prev) => (prev ? { ...prev, tickets: { ...prev.tickets, ...batch } } : prev))
+          })
+        }
+        if (event.type === 'removed') {
+          pending.delete(event.id)
+          setState((prev) => {
+            if (!prev?.tickets[event.id]) return prev
+            const { [event.id]: _gone, ...tickets } = prev.tickets
+            return { ...prev, tickets }
           })
         }
         if (event.type === 'review') {
@@ -227,6 +235,7 @@ export const learningActions = {
 }
 export const loadSettings = () => getJson<SettingsView>('/api/settings')
 export const loadPipeline = () => getJson<PipelineView>('/api/pipeline')
+export const loadReplays = (id: string) => getJson<ReplayView>(`/api/tickets/${id}/replays`)
 export const loadPrompt = (id: string, step: StepId) => getJson<PromptPreview>(`/api/tickets/${id}/prompt/${step}`)
 export const loadToday = () => getJson<TodayItem[]>('/api/today')
 export const askMetwo = (question: string, history: { role: 'you' | 'mevo'; text: string }[]) => post<AskReply>('/api/ask', { question, history })
@@ -297,6 +306,8 @@ export const actions = {
   // quick: a fresh cheap session, no screenshots or e2e; you check it by hand
   fixComments: (t: Ticket, picks?: { id: string; note?: string }[], quick = false) => post(`/api/tickets/${t.id}/fix-comments`, { ...(picks ? { picks } : {}), quick }),
   quickChecked: (t: Ticket) => post(`/api/tickets/${t.id}/quick-check`),
+  replay: (id: string) => post<{ ticket: Ticket }>(`/api/tickets/${id}/replay`),
+  deleteReplay: (id: string) => post(`/api/tickets/${id}/replay/delete`),
   ignoreComments: (t: Ticket, ids: string[], reopen = false) => post(`/api/tickets/${t.id}/comments/ignore`, { ids, reopen }),
   draftReply: (t: Ticket, comment: string, hint?: string) => post<{ text: string }>(`/api/tickets/${t.id}/comments/draft`, { comment, hint }),
   replyComment: (t: Ticket, comment: string, body: string) => post<{ url: string | null }>(`/api/tickets/${t.id}/comments/reply`, { comment, body }),
