@@ -40,6 +40,7 @@ export const STAGE_KEYS: readonly (readonly [string, string])[] = [
   ['review.supervisor.context', 'steps.supervisor.context'],
   ['review.supervisor.instructions', 'steps.supervisor.instructions'],
   ['review.visualCheck', 'steps.visual'],
+  ['review.shots', 'shots'],
   ['review.gates.test', 'repo.commands.test'],
   ['review.gates.typecheck', 'repo.commands.typecheck'],
   ['review.gates.lint', 'repo.commands.lint'],

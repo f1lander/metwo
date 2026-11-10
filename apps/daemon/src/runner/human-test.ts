@@ -356,6 +356,7 @@ Reply with only this JSON: {"where":"chrome, mock or preview","whereWhy":"","ste
     const cur = this.run(id, runId)
     if (!cur) return
     if (e.type === 'ready') this.patchRun(id, runId, { status: 'running' })
+    if (e.type === 'note' && typeof e.text === 'string') this.patchRun(id, runId, { note: e.text.slice(0, 300) })
     if (e.type === 'error' && typeof e.text === 'string') this.patchRun(id, runId, { errors: [...cur.errors, e.text].slice(-40) })
     if (e.type === 'tx' && typeof e.hash === 'string') this.patchRun(id, runId, { txs: [...cur.txs, e.hash] })
     if (e.type === 'pendingTx') this.patchRun(id, runId, { pendingTx: e.on === true })

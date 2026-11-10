@@ -673,6 +673,9 @@ export function startServer(port: number, host: string, rootDir: string, store: 
     const st = patch.steps
     if (st !== undefined && (typeof st !== 'object' || Object.entries(st).some(([k, v]) => !Object.hasOwn(STEP_CONTEXT, k) || typeof v !== 'object' || v === null || (v.effort !== undefined && v.effort !== null && !['low', 'medium', 'high'].includes(v.effort)) || (v.instructions !== undefined && (typeof v.instructions !== 'string' || v.instructions.length > 4000)) || (v.context !== undefined && (typeof v.context !== 'object' || Object.entries(v.context).some(([b, on]) => !STEP_CONTEXT[k as StepId].includes(b as never) || typeof on !== 'boolean'))))))
       return c.json({ ok: false, error: 'steps: { implement|review|supervisor|visual|quick: { effort: low|medium|high|null, instructions: text up to 4000, context: { <block>: boolean } } }' }, 400)
+    const sr = patch.shots
+    if (sr !== undefined && (typeof sr !== 'object' || sr === null || sr.max === null || sr.stories === null || !lim(sr.max, 1, 40) || !lim(sr.stories, 0, 20) || (sr.mobile !== undefined && !['layout', 'always', 'never'].includes(sr.mobile)) || (sr.before !== undefined && !['changed', 'bugs', 'never'].includes(sr.before)) || (sr.video !== undefined && !['interactions', 'off'].includes(sr.video))))
+      return c.json({ ok: false, error: 'shots: { max: 1 to 40, stories: 0 to 20, mobile: layout|always|never, before: changed|bugs|never, video: interactions|off }' }, 400)
     const ms = patch.mascot
     if (ms !== undefined && (typeof ms !== 'object' || (ms.enabled !== undefined && typeof ms.enabled !== 'boolean') || (ms.coffee !== undefined && typeof ms.coffee !== 'boolean'))) return c.json({ ok: false, error: 'mascot: { enabled?: boolean, coffee?: boolean }' }, 400)
     const ns = patch.slack?.nightShift

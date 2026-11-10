@@ -53,6 +53,7 @@ export function pipelineView(cfg: Config, staged: boolean): PipelineView {
         step('Gate · test', cmd(cfg.repo.commands.test), Boolean(cfg.repo.commands.test), 'review.gates.test', false),
         step('Supervisor', cfg.roles.supervisor === 'off' ? 'off' : `${cfg.roles.supervisor === 'opposite' ? 'another vendor than the implementer' : engine(cfg.roles.supervisor)}, up to ${cfg.roles.supervisorRounds} round(s)${tune(cfg, 'supervisor')}`, cfg.roles.supervisor !== 'off', 'review.supervisor'),
         step('Visual check', `${engine(cfg.roles.visual)}${tune(cfg, 'visual')}`, true, 'review.visual'),
+        step('Screenshots', `up to ${cfg.shots.max}, mobile: ${cfg.shots.mobile}, before: ${cfg.shots.before}, video: ${cfg.shots.video}`, true, 'review.shots'),
       ],
     },
     {

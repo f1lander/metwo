@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { ContextBlock, PlanFirst, Settings, NightShiftConfig, RollCall, StepId, StepValues } from '@ticketflow/shared'
+import type { ContextBlock, PlanFirst, Settings, NightShiftConfig, RollCall, ShotRules, StepId, StepValues } from '@ticketflow/shared'
 import { fromStages } from './stages.js'
 
 // Claude's model per lane; how hard it thinks is the global effort (pipeline.effort, the app, /effort).
@@ -109,6 +109,8 @@ export interface Config {
   // per AI step: effort (null = pipeline.effort; quick defaults to low), extra instructions added to
   // its prompt, and context blocks turned off ({ "figma": false }); see STEP_CONTEXT
   readonly steps: { readonly [K in StepId]: StepValues }
+  // the screenshots and video the lane takes; only the shots VISUAL.json names reach the PR
+  readonly shots: ShotRules
   readonly classifier: {
     readonly neverAuto: readonly string[]
     readonly fullLaneLabels: readonly string[]
@@ -267,6 +269,8 @@ export type CommentMoment = 'review_ready' | 'no_change' | 'pr_opened' | 'qa' | 
 
 // Every key except repo.path and linear.teamKey has a default, so a config file only
 // needs what differs. Objects merge key by key; arrays and values replace.
+export const SHOT_DEFAULTS: ShotRules = { max: 8, mobile: 'layout', before: 'changed', video: 'interactions', stories: 4 }
+
 const DEFAULTS: Config = {
   repo: {
     path: '',
@@ -371,6 +375,7 @@ const DEFAULTS: Config = {
     visual: { effort: null, instructions: '', context: {} },
     quick: { effort: 'low', instructions: '', context: {} },
   },
+  shots: SHOT_DEFAULTS,
   classifier: {
     neverAuto: ['Security', 'High', 'Protocol', 'Needs Design'],
     fullLaneLabels: ['Bug', 'Security', 'High'],
@@ -503,5 +508,5 @@ export function effective(cfg: Config, s: Settings | undefined): Config {
   if (!s) return cfg
   const { since: _since, ...autopilot } = s.autopilot ?? {}
   const pipeline = { ...(s.pipeline ?? {}), ...(s.effort ? { effort: s.effort } : {}), ...(s.maxParallel ? { maxParallel: s.maxParallel } : {}) }
-  return merge(cfg as unknown as Json, { engines: s.engines ?? {}, roles: s.roles ?? {}, autopilot, budget: s.budget ?? {}, triage: s.triage ?? {}, readiness: s.readiness ?? {}, localChecks: s.localChecks ?? {}, afterFix: s.afterFix ?? {}, chat: s.chat ?? {}, principles: s.principles ?? {}, slack: s.slack ?? {}, figma: s.figma ?? {}, mascot: s.mascot ?? {}, daemon: s.daemon ?? {}, quality: s.quality ?? {}, github: s.github ?? {}, steps: s.steps ?? {}, pipeline } as Json) as unknown as Config
+  return merge(cfg as unknown as Json, { engines: s.engines ?? {}, roles: s.roles ?? {}, autopilot, budget: s.budget ?? {}, triage: s.triage ?? {}, readiness: s.readiness ?? {}, localChecks: s.localChecks ?? {}, afterFix: s.afterFix ?? {}, chat: s.chat ?? {}, principles: s.principles ?? {}, slack: s.slack ?? {}, figma: s.figma ?? {}, mascot: s.mascot ?? {}, daemon: s.daemon ?? {}, quality: s.quality ?? {}, github: s.github ?? {}, steps: s.steps ?? {}, shots: s.shots ?? {}, pipeline } as Json) as unknown as Config
 }

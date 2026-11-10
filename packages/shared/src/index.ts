@@ -659,6 +659,8 @@ export interface HumanTestRun {
   // the Android phone it ran on; none means a Chromium window on the Mac
   readonly device?: { readonly serial: string; readonly model: string; readonly android?: string; readonly chrome?: string }
   // the wallet is waiting for the tester to approve a transaction (mock wallet)
+  // what the session says while it runs ("Test wallet connected: 0x…")
+  readonly note?: string
   readonly pendingTx?: boolean
 }
 
@@ -837,6 +839,8 @@ export interface Settings {
   readonly pipeline?: PipelineSettings
   // per AI step: effort, the context it gets and extra instructions
   readonly steps?: { readonly [K in StepId]?: StepSettings }
+  // which screenshots and videos the lane takes, and which reach the PR
+  readonly shots?: Partial<ShotRules>
   readonly github?: { readonly screenshots?: 'browser' | 'gist' | 'none'; readonly greptile?: { readonly enabled?: boolean }; readonly reviewers?: { readonly auto?: boolean; readonly max?: number } }
   readonly budget?: { readonly daily?: number | null; readonly monthly?: number | null; readonly regulate?: boolean; readonly fallback?: string; readonly planFirst?: PlanFirst }
   readonly engines?: {
@@ -876,6 +880,7 @@ export interface SettingsValues {
   readonly pipeline: { readonly effort: Effort; readonly maxParallel: number } & Required<PipelineSettings>
   readonly github: { readonly screenshots: 'browser' | 'gist' | 'none'; readonly greptile: { readonly enabled: boolean }; readonly reviewers: { readonly auto: boolean; readonly max: number } }
   readonly steps: { readonly [K in StepId]: StepValues }
+  readonly shots: ShotRules
   readonly principles: { readonly enabled: boolean; readonly ref: string }
   readonly slack: Required<{ [K in keyof SlackSettings]-?: NonNullable<SlackSettings[K]> }>
   readonly figma: { readonly enabled: boolean }
@@ -920,6 +925,18 @@ export const CONTEXT_INFO: { readonly [K in ContextBlock]: { readonly label: str
   video: { label: 'Video', what: 'Record a short clip of the interaction' },
   lenses: { label: 'Review lenses', what: 'Principles and knowledge used as review lenses' },
   feedback: { label: 'Past PR feedback', what: 'What reviewers said before about the files touched' },
+}
+export interface ShotRules {
+  // screenshots in all, stories and before shots included; also what reaches the PR
+  readonly max: number
+  // layout: mobile only when the layout changes
+  readonly mobile: 'layout' | 'always' | 'never'
+  // changed: a before shot only for states whose look changed
+  readonly before: 'changed' | 'bugs' | 'never'
+  // interactions: one short clip when a still can't show the change
+  readonly video: 'interactions' | 'off'
+  // story screenshots at most (they count in max)
+  readonly stories: number
 }
 export interface StepSettings {
   // null: the global effort (for quick: low)

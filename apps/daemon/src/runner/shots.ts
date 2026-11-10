@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { ghLogin } from './github.js'
 import { git, sh } from './shell.js'
+import { readVisual } from './visual.js'
 
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i
 const VIDEO = /\.(mp4|mov|webm)$/i
@@ -26,6 +27,28 @@ export function listMedia(flowDir: string): readonly { readonly file: string; re
         .map((f) => ({ file: path.join(videoDir, f), kind: 'video' as const }))
     : []
   return [...listShots(flowDir).map((file) => ({ file, kind: 'image' as const })), ...videos]
+}
+
+// What goes into the PR: the shots VISUAL.json's checks name, each after its before shot, in the
+// order of the checks, up to `max`; then one video. With no named shots (an old run, no
+// VISUAL.json), the first `max` shots by name.
+export function prMedia(flowDir: string, rules: { readonly max: number; readonly video: 'interactions' | 'off' }): readonly { readonly file: string; readonly kind: 'image' | 'video' }[] {
+  const all = listMedia(flowDir)
+  const images = all.filter((m) => m.kind === 'image')
+  const byName = new Map(images.map((m) => [path.basename(m.file), m]))
+  const named: { file: string; kind: 'image' }[] = []
+  const add = (name: string) => {
+    const m = byName.get(name)
+    if (m && !named.some((n) => n.file === m.file)) named.push({ file: m.file, kind: 'image' })
+  }
+  for (const c of readVisual(flowDir)?.checks ?? []) {
+    if (!c.shot) continue
+    add(c.shot.replace(/(^|[-_])after(?=[-_.])/i, '$1before'))
+    add(c.shot)
+  }
+  const shots = (named.length ? named : images).slice(0, Math.max(0, rules.max))
+  const video = rules.video === 'off' ? [] : all.filter((m) => m.kind === 'video').slice(0, 1)
+  return [...shots, ...video]
 }
 
 export interface UploadedShot {

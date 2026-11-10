@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { Ticket } from '@ticketflow/shared'
-import { type Config, ctxOn } from '../config.js'
+import { type Config, ctxOn, SHOT_DEFAULTS } from '../config.js'
 import { stepInstructions } from './brief.js'
 
 // What mevo tells a lane in each kind of follow-up round. The first turn's brief is in brief.ts.
@@ -18,9 +18,9 @@ export function visualCheckPrompt(cfg: Config, ticket: Ticket, flowDir: string, 
   return `Visual check only for ${ticket.id} (${ticket.title}) in ${ticket.worktree ?? ''}. Do NOT change any code and make no commits.
 Start the dev server: ${cfg.repo.commands.dev} ${port} (and Storybook with ${cfg.repo.commands.storybook} ${port + 1000} if the change has stories). Use the Playwright MCP and the e2e headless wallet fixtures as the brief describes (${path.join(flowDir, 'brief.md')}).
 1. Work out every state this branch changes on screen: read git diff origin/${cfg.repo.baseBranch}...HEAD, ARM-SUMMARY.md, PR-BODY.md${known ? ` and the checks from the last visual run:\n${known}` : ''}.
-2. Shoot each state at 1440x900 and 390x844 into ${path.join(flowDir, 'shots')}/, overwriting the after shot of the same state (same file name) so the PR's images can be swapped; new states get new numbered names.
+2. Shoot each state into ${path.join(flowDir, 'shots')}/ (${{ layout: 'desktop at 1440x900, plus 390x844 only where the layout changes', always: 'at 1440x900 and 390x844', never: 'desktop only, at 1440x900' }[(cfg.shots ?? SHOT_DEFAULTS).mobile]}; at most ${(cfg.shots ?? SHOT_DEFAULTS).max} in all), overwriting the after shot of the same state (same file name) so the PR's images can be swapped; new states get new numbered names. Shoot only what proves a check.
 3. Compare each new shot with the same name in ${path.join(flowDir, 'shots-prev')}/ and note any difference.
-4. Write ${path.join(flowDir, 'VISUAL.json')} with your verdict (verified only if every check passed and you saw it), one check per state with its shot, and in "summary" what you saw and what changed since the previous run.
+4. Write ${path.join(flowDir, 'VISUAL.json')} with your verdict (verified only if every check passed and you saw it), one check per state with its shot, and in "summary" what you saw and what changed since the previous run. Only the shots the checks name (and their before shots) go into the PR.
 ${ctxOn(cfg, 'visual', 'figma') && existsSync(path.join(flowDir, 'figma')) ? `\nThe ticket has a Figma reference in ${path.join(flowDir, 'figma')}/ (a PNG and a spec per frame). Shoot the same states at the frame's width, compare them with the reference element by element, and add a "Matches Figma: <frame>" check: pass only when they match, otherwise list the differences in its note.` : ''}
 Stop the servers when done. If you cannot reach a state, say so in the check (not_checked) instead of guessing.${stepInstructions(cfg, 'visual')}`
 }

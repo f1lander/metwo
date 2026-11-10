@@ -7,18 +7,23 @@ import { log } from '../log.js'
 import type { Store } from '../store.js'
 import { buildPrBody, commentOnPr, editPrBody, livePrBody, mediaBlock, openDraftPr, prettyShot, type PrMedia, replyToReviewComment } from './github.js'
 import { applyChanges } from './pr-desc.js'
-import { listMedia, uploadShots } from './shots.js'
+import { listMedia, prMedia, uploadShots } from './shots.js'
 
 // Everything that puts a ticket's work on its PR: the body, screenshots and videos, and the
 // update comment after each push.
 export class PrPublisher {
   constructor(
-    private readonly cfg: Config,
+    private readonly config: () => Config,
     private readonly store: Store,
     private readonly flowDir: (id: string) => string,
     private readonly notify: { readonly uploads: (ok: boolean, detail: string) => void },
     private readonly browser: () => GithubBrowser | null,
   ) {}
+
+  // the config with Settings on top
+  private get cfg(): Config {
+    return this.config()
+  }
 
   laneBody(id: string): string | null {
     const bodyFile = path.join(this.flowDir(id), 'PR-BODY.md')
@@ -63,7 +68,7 @@ export class PrPublisher {
   previewBody(id: string): { body: string; media: readonly { name: string; kind: 'image' | 'video' }[] } {
     const ticket = this.store.get(id)
     if (!ticket) throw new Error(`unknown ticket ${id}`)
-    const media = listMedia(this.flowDir(id)).map((m) => ({ name: path.basename(m.file), kind: m.kind }))
+    const media = prMedia(this.flowDir(id), this.cfg.shots).map((m) => ({ name: path.basename(m.file), kind: m.kind }))
     const body = buildPrBody(ticket, ticket.summary ?? '', this.laneBody(id), media.map((m) => ({ ...m, url: `metwo-local:${m.name}` })))
     return { body, media }
   }
@@ -108,7 +113,7 @@ export class PrPublisher {
     const number = ticket.pr?.number ?? Number(/\/pull\/(\d+)/.exec(prUrl ?? '')?.[1])
     if (!prUrl || !number) return null
     const since = visual?.since ?? Date.parse(ticket.lastPushAt ?? (ticket.journal ?? []).filter((j) => j.kind === 'pr').at(-1)?.at ?? '1970-01-01')
-    const fresh = listMedia(this.flowDir(id)).filter((m) => statSync(m.file).mtimeMs > since)
+    const fresh = prMedia(this.flowDir(id), this.cfg.shots).filter((m) => statSync(m.file).mtimeMs > since)
     const updateFile = path.join(this.flowDir(id), 'UPDATE.md')
     const what = visual ? visual.text : existsSync(updateFile) ? readFileSync(updateFile, 'utf8').trim() : ''
     const replies = visual ? [] : (ticket.pendingReplies ?? [])
@@ -157,7 +162,7 @@ export class PrPublisher {
     const prUrl = ticket.prUrl
     const number = ticket.pr?.number ?? Number(/\/pull\/(\d+)/.exec(prUrl ?? '')?.[1])
     if (!prUrl || !number) throw new Error(`${id} has no PR`)
-    const fresh = listMedia(this.flowDir(id)).filter((m) => statSync(m.file).mtimeMs > input.since)
+    const fresh = prMedia(this.flowDir(id), this.cfg.shots).filter((m) => statSync(m.file).mtimeMs > input.since)
     const { attached } = fresh.length ? await this.uploadMedia(ticket, prUrl, fresh) : { attached: [] as PrMedia[] }
     const live = await livePrBody(worktree, String(number))
     const changed = applyChanges(live.body, input.changes)
@@ -201,7 +206,7 @@ export class PrPublisher {
     const worktree = ticket.worktree as string
     const summary = ticket.summary ?? ''
     const laneBody = this.laneBody(id)
-    const media = listMedia(this.flowDir(id))
+    const media = prMedia(this.flowDir(id), this.cfg.shots)
     const mode = this.cfg.github.screenshots
 
     if (media.length === 0 || mode === 'none') {

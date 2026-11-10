@@ -98,7 +98,7 @@ export function HandTestCard({ ticket: t, phones = [] }: { ticket: Ticket; phone
       {open === v ? '▾' : '▸'}
     </button>
   )
-  const places = [...(t.pr ? [{ k: 'preview', l: 'Preview', why: "the PR's preview deploy, as people get it" }] : []), { k: 'mock', l: 'Test wallet', why: 'the e2e setup: the app from this worktree on the local chain, the test wallet already connected; transactions wait for Approve in the sidebar' }, { k: 'chrome', l: 'Your Chrome', why: 'your own Chrome and MetaMask, on the app from this worktree on Sepolia; the steps panel comes with the page and takes you to each step' }, ...ready.map((d) => ({ k: d.serial, l: d.model, why: `Chrome on the ${d.model} (${d.transport})` }))]
+  const places = [...(t.pr ? [{ k: 'preview', l: 'Preview', why: "the PR's preview deploy, as people get it" }] : []), { k: 'mock', l: 'Test wallet', why: 'the e2e setup: the app from this worktree on the local chain; mevo connects the test wallet for you, signatures go through and transactions wait for Approve in the sidebar' }, { k: 'chrome', l: 'Your Chrome', why: 'your own Chrome and MetaMask, on the app from this worktree on Sepolia; the steps panel comes with the page and takes you to each step' }, ...ready.map((d) => ({ k: d.serial, l: d.model, why: `Chrome on the ${d.model} (${d.transport})` }))]
   const seg = places.length === 1 ? (
     <span className="shrink-0 text-xs text-muted" title={places[0]?.why}>on the test wallet</span>
   ) : (
@@ -138,7 +138,7 @@ export function HandTestCard({ ticket: t, phones = [] }: { ticket: Ticket; phone
                 open it again
               </a>
             )}
-            <span className="min-w-24 flex-1 truncate text-muted">{live.pendingTx ? <span className="text-warn">the test wallet waits for your Approve in the page</span> : now ? `now: ${now.title}` : 'all done: Finish in the page'}</span>
+            <span className="min-w-24 flex-1 truncate text-muted" title={live.note}>{live.pendingTx ? <span className="text-warn">the test wallet waits for your Approve in the page</span> : live.note && /^Connect/.test(live.note) && done === 0 ? <span className={live.note.startsWith('Connect the wallet yourself') ? 'text-warn' : ''}>{live.note}</span> : now ? `now: ${now.title}` : 'all done: Finish in the page'}</span>
           </>
         )}
         <Button className="ml-auto" disabled={busy} onClick={go(() => actions.stopHandTest(t))}>

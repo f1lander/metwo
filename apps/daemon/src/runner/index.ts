@@ -86,7 +86,7 @@ export class Runner {
     private readonly linear: Linear,
     private readonly notify: Notifier,
   ) {
-    this.pr = new PrPublisher(base, store, (id) => this.flowDir(id), notify, () => this.browser)
+    this.pr = new PrPublisher(() => this.cfg, store, (id) => this.flowDir(id), notify, () => this.browser)
   }
 
   // The config with your Settings on top, rebuilt only when Settings change.

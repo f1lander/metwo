@@ -142,6 +142,21 @@ export function PipelineTab({ health, view, busy, run, save, reset, tickets }: {
           <Select label="visual check" value={e.roles.visual} options={engineOptions} onChange={(v) => save({ roles: { visual: v } })} />
         </Row>
         {tuning('visual')}
+        <Row label="Screenshots at most" hint="Stories and before shots included. The lane plans them from the acceptance criteria, and only the ones VISUAL.json names reach the PR, in that order." changed={has(o.shots, 'max')} onReset={() => reset('shots.max')}>
+          <NumberField label="screenshots at most" min={1} value={e.shots.max} onSave={(n) => n !== null && save({ shots: { max: Math.min(40, Math.round(n)) } })} />
+        </Row>
+        <Row label="Mobile shots" hint="Layout: 390x844 only for states whose layout changes." changed={has(o.shots, 'mobile')} onReset={() => reset('shots.mobile')}>
+          <Segmented label="mobile shots" value={e.shots.mobile} options={['layout', 'always', 'never'] as const} onChange={(v) => save({ shots: { mobile: v } })} />
+        </Row>
+        <Row label="Before shots" hint="Changed: only for states whose look changed (a fixed bug, a restyle). New screens have no before." changed={has(o.shots, 'before')} onReset={() => reset('shots.before')}>
+          <Segmented label="before shots" value={e.shots.before} options={['changed', 'bugs', 'never'] as const} onChange={(v) => save({ shots: { before: v } })} />
+        </Row>
+        <Row label="Video" hint="Interactions: one clip, planned as steps and sped up 1.5x, only when a screenshot can't show the change (a flow, an animation, focus). One video reaches the PR." changed={has(o.shots, 'video')} onReset={() => reset('shots.video')}>
+          <Segmented label="video" value={e.shots.video} options={['interactions', 'off'] as const} onChange={(v) => save({ shots: { video: v } })} />
+        </Row>
+        <Row label="Story shots at most" hint="Only for states no route in the app reaches. The PR lists the changed stories either way." changed={has(o.shots, 'stories')} onReset={() => reset('shots.stories')}>
+          <NumberField label="story shots at most" min={0} value={e.shots.stories} onSave={(n) => n !== null && save({ shots: { stories: Math.min(20, Math.round(n)) } })} />
+        </Row>
       </Panel>
 
       <Panel id="stage-beforePr" title={title('beforePr', 'Before the PR')} hint={stage('beforePr')?.what}>

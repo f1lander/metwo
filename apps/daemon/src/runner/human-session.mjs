@@ -58,24 +58,53 @@ await context.exposeBinding('__mevoAction', async (_src, a) => {
 })
 await context.addInitScript({ content: readFileSync(new URL('./human-page.js', import.meta.url), 'utf8') })
 
-// mock mode: the e2e headless wallet on the local chain; signing is allowed, transactions wait
-// for Approve in the sidebar
-let wallet = null
+// mock mode: the e2e headless wallet on the local chain, in every tab; signing is allowed,
+// transactions wait for Approve in the sidebar
+const wallets = []
+let armWallet = null
+let walletAddress = null
 if (cfg.wallet) {
   const { injectHeadlessWeb3Provider } = await import('@ensdomains/headless-web3-provider')
   const { mnemonicToAccount } = await import('viem/accounts')
   const { bytesToHex } = await import('viem')
   const { sepolia } = await import('viem/chains')
-  const keys = [0, 1, 2, 3].map((i) => bytesToHex(mnemonicToAccount('test test test test test test test test test test test junk', { addressIndex: i }).getHdKey().privateKey))
-  const p0 = await context.newPage()
-  wallet = await injectHeadlessWeb3Provider({
-    page: p0,
-    privateKeys: keys,
-    chains: [{ ...sepolia, rpcUrls: { default: { http: [cfg.wallet.rpc] } } }],
-    permitted: ['eth_requestAccounts', 'eth_accounts', 'wallet_switchEthereumChain', 'wallet_addEthereumChain', 'wallet_requestPermissions', 'personal_sign', 'eth_signTypedData', 'eth_signTypedData_v3', 'eth_signTypedData_v4'],
-  })
+  const accounts = [0, 1, 2, 3].map((i) => mnemonicToAccount('test test test test test test test test test test test junk', { addressIndex: i }))
+  const keys = accounts.map((a) => bytesToHex(a.getHdKey().privateKey))
+  walletAddress = accounts[0].address
+  // account 0 carries leftover contract code on the Sepolia fork, which makes UI registrations
+  // revert; the e2e fixtures clear it the same way
+  await fetch(cfg.wallet.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'anvil_setCode', params: [walletAddress, '0x'] }) }).catch((e) => out({ type: 'error', text: `could not clear account 0's code on the fork: ${e.message}` }))
+  armWallet = async (p) => {
+    const w = await injectHeadlessWeb3Provider({
+      page: p,
+      privateKeys: keys,
+      chains: [{ ...sepolia, rpcUrls: { default: { http: [cfg.wallet.rpc] } } }],
+      permitted: ['eth_requestAccounts', 'eth_accounts', 'wallet_switchEthereumChain', 'wallet_addEthereumChain', 'wallet_requestPermissions', 'personal_sign', 'eth_signTypedData', 'eth_signTypedData_v1', 'eth_signTypedData_v3', 'eth_signTypedData_v4'],
+    })
+    // the page can't wrap this provider (a Proxy that ignores writes), so its calls are recorded here
+    const request = w.request.bind(w)
+    w.request = async (args) => {
+      const t = Date.now()
+      try {
+        const result = await request(args)
+        rpc.push({ method: args?.method, params: args?.params ?? null, result: result ?? null, t })
+        if (args?.method === 'eth_sendTransaction' && typeof result === 'string') out({ type: 'tx', hash: result })
+        return result
+      } catch (e) {
+        rpc.push({ method: args?.method, params: args?.params ?? null, result: null, error: String(e?.message ?? e), t })
+        throw e
+      }
+    }
+    wallets.push(w)
+    p.on('close', () => {
+      const i = wallets.indexOf(w)
+      if (i >= 0) wallets.splice(i, 1)
+    })
+  }
+  await armWallet(await context.newPage())
+  context.on('page', (p) => void armWallet(p).catch((e) => out({ type: 'error', text: `no test wallet in the new tab: ${e.message}` })))
   setInterval(async () => {
-    const n = wallet.getPendingRequestCount('eth_sendTransaction')
+    const n = wallets.reduce((sum, w) => sum + w.getPendingRequestCount('eth_sendTransaction'), 0)
     if ((n > 0) !== pendingTx) {
       pendingTx = n > 0
       out({ type: 'pendingTx', on: pendingTx })
@@ -84,9 +113,36 @@ if (cfg.wallet) {
   }, 700)
 }
 async function walletDecision(kind) {
-  if (!wallet) return
-  if (kind === 'approve') await wallet.authorize('eth_sendTransaction').catch((e) => out({ type: 'error', text: `approve failed: ${e.message}` }))
-  else await wallet.reject('eth_sendTransaction').catch(() => {})
+  for (const w of wallets) {
+    if (!w.getPendingRequestCount('eth_sendTransaction')) continue
+    if (kind === 'approve') await w.authorize('eth_sendTransaction').catch((e) => out({ type: 'error', text: `approve failed: ${e.message}` }))
+    else await w.reject('eth_sendTransaction').catch(() => {})
+  }
+}
+
+// What the e2e fixtures do before a test: open the connect dialog, pick the test wallet (the
+// connection requests are permitted, so they go through) and skip the backend sign-in prompt,
+// which needs a worker the local stack doesn't run. Best effort: on a miss you connect by hand.
+async function connectWallet(p) {
+  const button = p.getByRole('button', { name: /^connect( login| wallet)?$/i }).first()
+  const ok = await button.waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false)
+  if (!ok) return 'no Connect button on the first page'
+  const option = p.getByText('Headless Web3 Provider').first()
+  // the server-rendered button can be clickable before the app hydrates: retry until the dialog opens
+  const until = Date.now() + 40_000
+  while (Date.now() < until && !(await option.isVisible().catch(() => false))) {
+    if (!(await p.getByRole('dialog').first().isVisible().catch(() => false))) await button.click({ timeout: 5_000 }).catch(() => {})
+    await option.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {})
+  }
+  if (!(await option.isVisible().catch(() => false))) return 'the connect dialog did not list "Headless Web3 Provider"'
+  await option.click()
+  if (!(await button.waitFor({ state: 'hidden', timeout: 20_000 }).then(() => true, () => false))) return 'the app did not finish connecting'
+  const verify = p.getByRole('alertdialog', { name: 'Verify your wallet' })
+  if (await verify.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true, () => false)) {
+    await p.keyboard.type('skip', { delay: 50 })
+    await p.locator('[data-slot="alert-dialog-overlay"]').waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {})
+  }
+  return null
 }
 
 const p0 = page() ?? (await context.newPage())
@@ -100,6 +156,11 @@ p0.on('load', () => void render())
 await p0.goto(cfg.url).catch((e) => out({ type: 'error', text: `could not open ${cfg.url}: ${e.message}` }))
 out({ type: 'ready' })
 await render()
+if (cfg.wallet) {
+  out({ type: 'note', text: 'Connecting the test wallet…' })
+  const miss = await connectWallet(p0).catch((e) => e.message)
+  out({ type: 'note', text: miss ? `Connect the wallet yourself: pick "Headless Web3 Provider" in the connect dialog (${miss})` : `Test wallet connected: ${walletAddress}` })
+}
 
 // --- the checks: only the current step is watched, and only what happened since it became current
 const match = (value, text) => {
