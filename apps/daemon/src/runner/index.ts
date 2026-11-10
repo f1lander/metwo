@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { diagnoseCi, rerunFailed } from './ci.js'
 import path from 'node:path'
-import { type BranchUpdateResult, type BudgetStatus, type CommentTriage, type ContextBlock, type Effort, type PromptPreview, type ReplayView, type StepId, type StagePhase, type Lane, type LocalChecks, markdownSection, reviewerFollowUps, type MediaFile, openComments, type StartChoice, type SupervisionReport, type Ticket, type VisualReport } from '@ticketflow/shared'
+import { type BranchUpdateResult, type BudgetStatus, type CommentTriage, type ContextBlock, type Effort, type PromptPreview, type ReplayView, type StepId, type VisualPlanView, type StagePhase, type Lane, type LocalChecks, markdownSection, reviewerFollowUps, type MediaFile, openComments, type StartChoice, type SupervisionReport, type Ticket, type VisualReport } from '@ticketflow/shared'
 import { regulatedEffort } from '../budget.js'
 import { type Config, ctxOn, effective } from '../config.js'
 import { enabledEngines, type Engine, type EngineId, parseEngineRef, type RunResult } from '../engines/index.js'
@@ -31,7 +31,7 @@ import { type PullResult, pullPrBranch } from './pull.js'
 import { writeRecord } from './record.js'
 import { readVisual } from './visual.js'
 import { cutClip } from './clip.js'
-import { baseCheckout, beforeKey, markRunInVisual, planFile, readRun, readVisualPlan, type RunReport, runDir, runPlan, type VisualPlan, verdictPrompt } from './visual-plan.js'
+import { baseCheckout, beforeKey, fallbackFile, fellBack, planView, readRun, readVisualPlan, type RunReport, runDir, runPlan, type VisualPlan, verdictPrompt } from './visual-plan.js'
 import { appFor, startApp } from './app-server.js'
 import { prSize, readyHold, securityHits, securityLens, sizeLine } from './quality.js'
 import { figmaLinks, type FigmaFrame, figmaSection } from '../figma.js'
@@ -730,7 +730,11 @@ export class Runner {
         this.checkStopped(id)
         this.journalRun(id, run)
         await this.cutVideo(id, run, plan)
-        prompt = verdictPrompt(this.cfg, ticket, flowDir, run, plan, false)
+        // steps that fail: the AI takes the screenshots itself, as without steps
+        if (run.ok) {
+          rmSync(fallbackFile(flowDir), { force: true })
+          prompt = verdictPrompt(this.cfg, ticket, flowDir, run, plan, false)
+        } else writeFileSync(fallbackFile(flowDir), new Date().toISOString())
       }
       const role = this.resolve(this.cfg.roles.visual, null, this.cfg.models.review.model) ?? this.resolve('claude', null, this.cfg.models.review.model)
       if (!role) throw new Error('no engine for the visual check')
@@ -2081,7 +2085,7 @@ ${t.summary ? `What the PR does (the author's summary):\n${t.summary.slice(0, 30
       await this.reviewPass(ticket, wt, impl.engine.id)
     }
 
-    if (!quick && this.cfg.shots.mode === 'steps') await this.visualSteps(id, wt)
+    if (!quick && this.cfg.shots.mode === 'steps') await this.visualSteps(id, wt, round)
 
     if (quick) this.readQuickCheck(id)
     await this.finishRun(id, ticket, wt, impl.engine.id, round, followUp, readSummary, openPr, quick)
@@ -2089,7 +2093,7 @@ ${t.summary ? `What the PR does (the author's summary):\n${t.summary.slice(0, 30
 
   // Steps mode: mevo runs the lane's VISUAL-PLAN.json, the lane fixes what failed and judges the
   // shots, and mevo runs it once more when the code or the plan changed.
-  private async visualSteps(id: string, wt: Worktree): Promise<void> {
+  private async visualSteps(id: string, wt: Worktree, round = 0): Promise<void> {
     const plan = readVisualPlan(wt.flowDir)
     if (!plan) {
       if (!readVisual(wt.flowDir)) this.store.journal(id, { kind: 'note', title: 'No visual plan', body: 'The lane wrote neither VISUAL-PLAN.json nor VISUAL.json, so there are no screenshots for this round.' })
@@ -2107,35 +2111,42 @@ ${t.summary ? `What the PR does (the author's summary):\n${t.summary.slice(0, 30
       this.checkStopped(id)
       const why = error instanceof Error ? error.message : String(error)
       this.store.journal(id, { kind: 'failure', title: 'The visual plan could not run', body: `${why}\n\nThe lane takes the screenshots itself this time.` })
-      await this.laneTurn(id, `mevo could not run your visual plan (${why.slice(0, 300)}). Take the screenshots yourself instead, following these rules, then write ${path.join(wt.flowDir, 'VISUAL.json')}.\n\n${visualCheckPrompt(this.cfg, ticket, wt.flowDir, ticket.port ?? port)}`, 'Visual check by the lane')
+      await this.visualTurn(id, `mevo could not run the visual plan (${why.slice(0, 300)}). Take the screenshots yourself instead, following these rules, then write ${path.join(wt.flowDir, 'VISUAL.json')}.\n\n${visualCheckPrompt(this.cfg, ticket, wt.flowDir, ticket.port ?? port)}`, 'Visual check by the lane')
       return
     }
     this.checkStopped(id)
     this.journalRun(id, run)
-    if (this.cfg.shots.before !== 'never' && plan.steps.some((s) => s.shot?.before)) await this.beforeShots(id, wt, plan)
-    const head = await git(['rev-parse', 'HEAD'], wt.path).catch(() => '')
-    const planText = readFileSync(planFile(wt.flowDir), 'utf8')
-    await this.laneTurn(id, verdictPrompt(this.cfg, ticket, wt.flowDir, run, plan, true), 'Visual verdict')
-    const changed = (await git(['rev-parse', 'HEAD'], wt.path).catch(() => '')) !== head || (existsSync(planFile(wt.flowDir)) ? readFileSync(planFile(wt.flowDir), 'utf8') : '') !== planText
-    if (!run.ok && changed) {
-      const again = readVisualPlan(wt.flowDir) ?? plan
-      try {
-        run = await runPlan({ cfg: this.cfg, worktree: wt.path, flowDir: wt.flowDir, plan: again, prefix: 'after', port, stage, ...(signal ? { signal } : {}) })
-        this.journalRun(id, run, true)
-      } catch (error) {
-        this.store.journal(id, { kind: 'failure', title: 'The visual plan could not run again', body: error instanceof Error ? error.message : String(error) })
-      }
+    // the steps failed: the AI takes the screenshots itself this round, as in lane mode. The steps
+    // stay for Test by hand.
+    if (!run.ok) {
+      await this.cutVideo(id, run, plan)
+      if (round > 0 && fellBack(wt.flowDir)) return
+      writeFileSync(fallbackFile(wt.flowDir), new Date().toISOString())
+      const failed = run.steps.find((s) => s.status === 'failed')
+      this.store.journal(id, { kind: 'note', title: 'The steps failed: the AI takes the screenshots itself', body: failed ? `${failed.title}: ${failed.error ?? 'failed'}` : '' })
+      await this.visualTurn(id, `mevo ran the visual plan but step "${failed?.title ?? '?'}" failed (${(failed?.error ?? '').slice(0, 300)}). Take the screenshots yourself instead, following these rules, then write ${path.join(wt.flowDir, 'VISUAL.json')}.\n\n${visualCheckPrompt(this.cfg, ticket, wt.flowDir, ticket.port ?? port)}`, 'Visual check by the AI')
+      return
     }
-    markRunInVisual(wt.flowDir, run)
-    await this.cutVideo(id, run, readVisualPlan(wt.flowDir) ?? plan)
+    rmSync(fallbackFile(wt.flowDir), { force: true })
+    if (this.cfg.shots.before !== 'never' && plan.steps.some((s) => s.shot?.before)) await this.beforeShots(id, wt, plan)
+    await this.cutVideo(id, run, plan)
+    // a supervisor round re-runs the plan (free) on the new code; the first round's verdict stands
+    if (round > 0) return
+    await this.visualTurn(id, verdictPrompt(this.cfg, ticket, wt.flowDir, run, plan, false), 'Visual verdict')
+  }
+
+  visualPlanView(id: string): VisualPlanView | null {
+    return planView(this.flowDir(id))
   }
 
   // the run's video, cut to its steps (the waits drop out) and sped up, as the PR's clip. Only
   // when a step interacts (a "do"); looking at pages needs no video.
   private async cutVideo(id: string, run: RunReport, plan?: VisualPlan | null): Promise<void> {
-    if (!run.video || this.cfg.shots.video === 'off') return
-    if (plan && !plan.steps.some((s) => s.do)) return
     const flowDir = this.flowDir(id)
+    // a run that failed shows the app stuck on that step: no clip, and no stale one from before
+    if (!run.ok) rmSync(path.join(flowDir, 'videos', '01-visual-plan.mp4'), { force: true })
+    if (!run.ok || !run.video || this.cfg.shots.video === 'off') return
+    if (plan && !plan.steps.some((s) => s.do)) return
     const from = path.join(runDir(flowDir), run.prefix, run.video)
     if (!existsSync(from)) return
     const videos = path.join(flowDir, 'videos')
@@ -2185,26 +2196,26 @@ ${t.summary ? `What the PR does (the author's summary):\n${t.summary.slice(0, 30
     })
   }
 
-  // One resumed turn of the implementer, outside the lane's flow (the visual verdict)
-  private async laneTurn(id: string, prompt: string, title: string): Promise<void> {
+  // The visual verdict: a fresh, small session on the visual check's engine. Not the lane's own
+  // session: resuming it reloads the whole implementation (several dollars) to look at a few shots.
+  private async visualTurn(id: string, prompt: string, title: string): Promise<void> {
     const ticket = this.store.get(id) as Ticket
-    const impl = this.implementer(ticket)
-    const resume = ticket.sessionId && (ticket.sessionEngine ?? 'claude') === impl.engine.id ? ticket.sessionId : undefined
+    const role = this.resolve(this.cfg.roles.visual, null, this.cfg.models.review.model) ?? this.resolve('claude', null, this.cfg.models.review.model)
+    if (!role) return
     const flowDir = this.flowDir(id)
     const effort = this.stepEffort('visual')
-    this.progress(ticket, 'stage', `${title.toLowerCase()} on ${impl.engine.label}`)
-    const result = await impl.engine.run({
+    this.progress(ticket, 'stage', `${title.toLowerCase()} on ${role.engine.label}`)
+    const result = await role.engine.run({
       cwd: ticket.worktree as string,
-      prompt: resume ? prompt : `You are checking the work on ${id} in this worktree. Read ${path.join(flowDir, 'brief.md')} and ARM-SUMMARY.md first.\n\n${prompt}`,
-      model: impl.model,
+      prompt: `You check the visual result of ${id} (${ticket.title}) in this worktree. For context read only the "## Ticket" section of ${path.join(flowDir, 'brief.md')} and the acceptance criteria at the top of ARM-SUMMARY.md.\n\n${prompt}`,
+      model: role.model,
       effort,
       logFile: path.join(flowDir, 'logs', 'visual.jsonl'),
-      ...(resume ? { resume } : {}),
       signal: this.signalOf(id),
       onLine: (kind, line) => this.progress(ticket, kind, line),
     })
     this.checkStopped(id)
-    this.store.journal(id, { kind: 'run', title: `${title} · ${impl.engine.label}`, body: result.text.slice(0, 3000), meta: { model: `${result.model ?? impl.model}/${effort}`, ...(result.costUsd ? { cost: Number(result.costUsd.toFixed(2)) } : {}) } })
+    this.store.journal(id, { kind: 'run', title: `${title} · ${role.engine.label}`, body: result.text.slice(0, 3000), meta: { model: `${result.model ?? role.model}/${effort}`, ...(result.costUsd ? { cost: Number(result.costUsd.toFixed(2)) } : {}) } })
   }
 
   // What the quick fix asks you to look at, from QUICK-CHECK.md

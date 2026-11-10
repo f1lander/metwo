@@ -4,7 +4,7 @@ import path from 'node:path'
 import { ghLogin } from './github.js'
 import { git, sh } from './shell.js'
 import { readVisual } from './visual.js'
-import { readRun } from './visual-plan.js'
+import { fellBack, readRun } from './visual-plan.js'
 
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i
 const VIDEO = /\.(mp4|mov|webm)$/i
@@ -48,7 +48,8 @@ export function prMedia(flowDir: string, rules: { readonly max: number; readonly
   }
   // steps mode: every shot of mevo's run, in step order (each viewport, before first), then the
   // lane's story shots
-  const run = rules.mode === 'steps' ? readRun(flowDir, 'after') : null
+  // when the steps failed and the AI took the shots itself, its VISUAL.json decides, as in lane mode
+  const run = rules.mode === 'steps' && !fellBack(flowDir) ? readRun(flowDir, 'after') : null
   if (run) {
     for (const s of run.steps) for (const f of s.shots) pair(f)
     for (const m of images) if (/-story-/i.test(path.basename(m.file))) add(path.basename(m.file))

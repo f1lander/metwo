@@ -35,6 +35,11 @@ export class PrPublisher {
     const safe = path.basename(name)
     const hit = listMedia(this.flowDir(id)).find((m) => path.basename(m.file) === safe)
     if (hit) return hit.file
+    // what the page showed when a visual plan step failed, asked for as run--<name>
+    if (safe.startsWith('run--')) {
+      const run = path.join(this.flowDir(id), 'visual-run', 'after', safe.slice(5))
+      return existsSync(run) ? run : null
+    }
     // the previous visual run's shots, asked for as prev--<name>
     if (safe.startsWith('prev--')) {
       const prev = path.join(this.flowDir(id), 'shots-prev', safe.slice(6))

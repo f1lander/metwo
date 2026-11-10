@@ -1,7 +1,7 @@
-import type { MediaFile, Ticket, VisualVerdict } from '@ticketflow/shared'
+import type { MediaFile, Ticket, VisualPlanView, VisualVerdict } from '@ticketflow/shared'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
-import { actions, loadMedia, mediaUrl } from '../lib/api.js'
+import { actions, loadMedia, loadVisualPlan, mediaUrl } from '../lib/api.js'
 import { PostToPr } from './PrDescPanel.js'
 import { Button, Pill } from './ui.js'
 
@@ -60,6 +60,7 @@ export function VisualTab({ ticket: t }: { ticket: Ticket }) {
   return (
     <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-4">
       <VisualControls ticket={t} hasPrevious={previous.size > 0} compare={compare} setCompare={setCompare} />
+      <PlanSteps ticket={t} />
       {v ? (
         <div className={`rounded-lg border px-4 py-3 ${v.verdict === 'verified' ? 'border-[#1f3b2c] bg-[#121b16]' : v.verdict === 'partial' ? 'border-[#3d3522] bg-[#1a1812]' : v.verdict === 'not_verified' ? 'border-[#4a2a2f] bg-[#1b1416]' : 'border-line bg-panel'}`}>
           <div className="flex flex-wrap items-center gap-2">
@@ -163,6 +164,69 @@ export function VisualTab({ ticket: t }: { ticket: Ticket }) {
         )}
       </AnimatePresence>
     </motion.div>
+  )
+}
+
+// The lane's test steps (steps mode) and what happened when mevo ran them. The same steps start
+// Test by hand.
+function PlanSteps({ ticket: t }: { ticket: Ticket }) {
+  const [plan, setPlan] = useState<VisualPlanView | null>(null)
+  const [code, setCode] = useState<string | null>(null)
+  useEffect(() => {
+    loadVisualPlan(t.id).then(setPlan, () => setPlan(null))
+  }, [t.id, t.status, t.commits, t.visualAt, t.journal?.length])
+  if (!plan) return null
+  const mark = { passed: { m: '✓', c: 'text-ok' }, failed: { m: '✕', c: 'text-bad' }, skipped: { m: '–', c: 'text-dim' } } as const
+  const shot = (name: string, label: string) => (
+    <a key={name} href={mediaUrl(t.id, name)} target="_blank" rel="noreferrer" title={label} className="block overflow-hidden rounded border border-line hover:border-line-2">
+      <img src={mediaUrl(t.id, name)} alt={label} loading="lazy" className="h-16 w-auto" />
+    </a>
+  )
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-line bg-panel px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-medium text-fg">Test steps</span>
+        <Pill tone={plan.ok === null ? 'neutral' : plan.ok ? 'ok' : 'warn'}>{plan.ok === null ? 'not run yet' : plan.ok ? 'mevo ran them' : 'a step failed'}</Pill>
+        <span className="min-w-0 flex-1 text-[11px] text-dim">
+          {plan.fellBack ? "They failed, so the AI took the screenshots below itself this round. " : ''}Written by the lane; the same steps start Test by hand.
+        </span>
+      </div>
+      <ol className="flex flex-col divide-y divide-line">
+        {plan.steps.map((s, i) => (
+          <li key={s.id} className="flex flex-col gap-1 py-2 text-xs">
+            <div className="flex items-start gap-2">
+              <span className={`w-3 shrink-0 font-semibold ${s.status ? mark[s.status].c : 'text-dim'}`}>{s.status ? mark[s.status].m : '○'}</span>
+              <span className="min-w-0 flex-1">
+                <span className="text-fg">
+                  {i + 1}. {s.title}
+                </span>
+                {s.go && <span className="ml-2 font-mono text-[11px] text-dim">{s.go}</span>}
+                {s.proves && <span className="ml-2 text-[11px] text-dim">{s.proves}</span>}
+                {s.expect && <span className="block text-muted">should show: {s.expect}</span>}
+                <span className="block text-[11px] text-dim">
+                  checked by {s.check.kind}
+                  {s.check.value ? ` "${s.check.value}"` : ''}
+                  {s.do && (
+                    <button type="button" onClick={() => setCode(code === s.id ? null : s.id)} className="ml-2 text-accent-fg hover:underline">
+                      {code === s.id ? 'hide the lines' : 'the lines mevo runs'}
+                    </button>
+                  )}
+                </span>
+                {s.error && <span className="block text-bad">{s.error}</span>}
+              </span>
+            </div>
+            {code === s.id && s.do && <pre className="ml-5 overflow-x-auto rounded-md border border-line bg-sunk px-2.5 py-1.5 font-mono text-[11px] whitespace-pre-wrap text-fg-2">{s.do}</pre>}
+            {(s.shots.length > 0 || s.before.length > 0 || s.failShot) && (
+              <div className="ml-5 flex flex-wrap gap-1.5">
+                {s.before.map((n) => shot(n, `before · ${n}`))}
+                {s.shots.map((n) => shot(n, n))}
+                {s.failShot && shot(s.failShot, 'what the page showed when it failed')}
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
   )
 }
 

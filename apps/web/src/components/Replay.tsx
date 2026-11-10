@@ -53,7 +53,7 @@ const delta = (a: number | null, b: number | null) => (a === null || b === null 
 
 const ROWS: readonly Row[] = [
   { label: 'Cost', get: (m, o) => `${money(m.cost)}${m.id === o.id ? '' : delta(m.cost, o.cost)}`, hint: 'What the CLIs reported for the first pass, review and supervisor included' },
-  { label: 'Tokens', get: (m, o) => `${m.tokens === null ? '—' : `${Math.round(m.tokens / 1000)}k`}${m.id === o.id ? '' : delta(m.tokens, o.tokens)}` },
+  { label: 'New tokens', hint: 'Input and output, without cache reads (most of the cost is cache reads of the session)', get: (m, o) => `${m.tokens === null ? '—' : `${Math.round(m.tokens / 1000)}k`}${m.id === o.id ? '' : delta(m.tokens, o.tokens)}` },
   { label: 'Time', get: (m, o) => `${mins(m.minutes)}${m.id === o.id ? '' : delta(m.minutes, o.minutes)}`, hint: 'From the start to ready, waits included' },
   { label: 'Lane time', get: (m) => mins(m.laneMinutes) },
   { label: 'Turns', get: (m) => String(m.turns), hint: 'Model turns: lane, verdict, quick fixes' },

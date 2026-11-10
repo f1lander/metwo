@@ -647,6 +647,7 @@ export function startServer(port: number, host: string, rootDir: string, store: 
   app.get('/api/pipeline', (c) => c.json(controls.pipeline()))
   app.post('/api/tickets/:id/replay', async (c) => c.json({ ok: true, ticket: await runner.startReplay(c.req.param('id')) }))
   app.get('/api/tickets/:id/replays', async (c) => c.json(await runner.replays(c.req.param('id'))))
+  app.get('/api/tickets/:id/visual-plan', (c) => c.json(runner.visualPlanView(c.req.param('id'))))
   app.post('/api/tickets/:id/replay/delete', async (c) => {
     await runner.deleteReplay(c.req.param('id'))
     return c.json({ ok: true })
@@ -680,7 +681,7 @@ export function startServer(port: number, host: string, rootDir: string, store: 
     if (st !== undefined && (typeof st !== 'object' || Object.entries(st).some(([k, v]) => !Object.hasOwn(STEP_CONTEXT, k) || typeof v !== 'object' || v === null || (v.effort !== undefined && v.effort !== null && !['low', 'medium', 'high'].includes(v.effort)) || (v.instructions !== undefined && (typeof v.instructions !== 'string' || v.instructions.length > 4000)) || (v.context !== undefined && (typeof v.context !== 'object' || Object.entries(v.context).some(([b, on]) => !STEP_CONTEXT[k as StepId].includes(b as never) || typeof on !== 'boolean'))))))
       return c.json({ ok: false, error: 'steps: { implement|review|supervisor|visual|quick: { effort: low|medium|high|null, instructions: text up to 4000, context: { <block>: boolean } } }' }, 400)
     const sr = patch.shots
-    if (sr !== undefined && (typeof sr !== 'object' || sr === null || sr.max === null || sr.stories === null || !lim(sr.max, 1, 40) || !lim(sr.stories, 0, 20) || (sr.mobile !== undefined && !['layout', 'always', 'never'].includes(sr.mobile)) || (sr.before !== undefined && !['changed', 'bugs', 'never'].includes(sr.before)) || (sr.video !== undefined && !['interactions', 'off'].includes(sr.video)) || (sr.mode !== undefined && sr.mode !== 'lane' && sr.mode !== 'steps') || (sr.speed !== undefined && (typeof sr.speed !== 'number' || sr.speed < 1 || sr.speed > 4))))
+    if (sr !== undefined && (typeof sr !== 'object' || sr === null || sr.max === null || sr.stories === null || !lim(sr.max, 1, 40) || !lim(sr.stories, 0, 20) || (sr.mobile !== undefined && !['layout', 'always', 'never'].includes(sr.mobile)) || (sr.before !== undefined && !['changed', 'bugs', 'never'].includes(sr.before)) || (sr.video !== undefined && !['interactions', 'off'].includes(sr.video)) || (sr.mode !== undefined && sr.mode !== 'lane') || (sr.speed !== undefined && (typeof sr.speed !== 'number' || sr.speed < 1 || sr.speed > 4))))
       return c.json({ ok: false, error: 'shots: { max: 1 to 40, stories: 0 to 20, mobile: layout|always|never, before: changed|bugs|never, video: interactions|off, mode: lane|steps, speed: 1 to 4 }' }, 400)
     const ms = patch.mascot
     if (ms !== undefined && (typeof ms !== 'object' || (ms.enabled !== undefined && typeof ms.enabled !== 'boolean') || (ms.coffee !== undefined && typeof ms.coffee !== 'boolean'))) return c.json({ ok: false, error: 'mascot: { enabled?: boolean, coffee?: boolean }' }, 400)

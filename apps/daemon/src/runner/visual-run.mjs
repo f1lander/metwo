@@ -78,21 +78,40 @@ const banner = (text) => page.evaluate((t) => window.__mevoBanner?.(t), text).ca
 // what the e2e fixtures do: open the connect dialog, pick the test wallet, skip the sign-in prompt
 async function connect() {
   if (!wallet) throw new Error('no test wallet in this run (the repo has no e2e wallet package)')
-  const button = page.getByRole('button', { name: /^connect( login| wallet)?$/i }).first()
-  await button.waitFor({ state: 'visible', timeout: 60_000 })
-  const option = page.getByText('Headless Web3 Provider').first()
-  const until = Date.now() + 40_000
-  while (Date.now() < until && !(await option.isVisible().catch(() => false))) {
-    if (!(await page.getByRole('dialog').first().isVisible().catch(() => false))) await button.click({ timeout: 5_000 }).catch(() => {})
-    await option.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {})
+  const miss = await connectIn(page, wallet.address)
+  if (miss) throw new Error(`connect: ${miss}`)
+}
+async function connectIn(p, address) {
+  const button = p.getByRole('button', { name: /^connect( login| wallet)?$/i }).first()
+  const shown = p.getByText(new RegExp(address.slice(0, 6), 'i')).first()
+  // the app may reconnect the test wallet by itself: then there is no Connect button to press
+  let state = null
+  const first = Date.now() + 30_000
+  while (!state && Date.now() < first) {
+    if (await shown.isVisible().catch(() => false)) state = 'connected'
+    else if (await button.isVisible().catch(() => false)) state = 'button'
+    else await p.waitForTimeout(500)
   }
-  await option.click()
-  await button.waitFor({ state: 'hidden', timeout: 20_000 })
-  const verify = page.getByRole('alertdialog', { name: 'Verify your wallet' })
-  if (await verify.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true, () => false)) {
-    await page.keyboard.type('skip', { delay: 50 })
-    await page.locator('[data-slot="alert-dialog-overlay"]').waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {})
+  if (!state) return 'neither a Connect button nor the test address showed on the page'
+  if (state === 'button') {
+    const option = p.getByText('Headless Web3 Provider').first()
+    // the server-rendered button can be clickable before the app hydrates: retry until the dialog opens
+    const until = Date.now() + 40_000
+    while (Date.now() < until && !(await option.isVisible().catch(() => false))) {
+      if (!(await p.getByRole('dialog').first().isVisible().catch(() => false))) await button.click({ timeout: 5_000 }).catch(() => {})
+      await option.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {})
+    }
+    if (!(await option.isVisible().catch(() => false))) return 'the connect dialog did not list "Headless Web3 Provider"'
+    await option.click()
+    if (!(await button.waitFor({ state: 'hidden', timeout: 20_000 }).then(() => true, () => false))) return 'the app did not finish connecting'
   }
+  // the backend sign-in prompt (its name changed over time): skipped, the local stack has no backend
+  const prompt = p.getByRole('alertdialog', { name: /verify your wallet|authenticate to continue/i }).first()
+  if (await prompt.waitFor({ state: 'visible', timeout: 10_000 }).then(() => true, () => false)) {
+    await p.keyboard.type('skip', { delay: 50 })
+    await p.locator('[data-slot="alert-dialog-overlay"]').waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {})
+  }
+  return null
 }
 
 // the next transaction the app sends, approved (local fork, test accounts)
@@ -149,6 +168,8 @@ let broken = null
 await goto(cfg.url).catch((e) => {
   broken = `could not open ${cfg.url}: ${e.message.split('\n')[0]}`
 })
+// a consent banner over the page: the privacy-preserving answer, so it stays out of the shots
+await page.getByRole('button', { name: /^no thanks$/i }).first().click({ timeout: 2_000 }).catch(() => {})
 
 for (const [i, step] of cfg.steps.entries()) {
   if (i > last) break

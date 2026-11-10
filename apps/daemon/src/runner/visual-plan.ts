@@ -4,9 +4,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import type { TestCheckKind, TestPlan, TestStep, Ticket } from '@ticketflow/shared'
+import type { TestCheckKind, TestPlan, TestStep, Ticket, VisualPlanView } from '@ticketflow/shared'
 import { type Config, SHOT_DEFAULTS } from '../config.js'
-import { type AppServer, appFor, linkModules, startApp } from './app-server.js'
+import { type AppServer, linkModules, startApp } from './app-server.js'
 import { cleanSteps } from './human-test.js'
 import { git, sh } from './shell.js'
 
@@ -68,6 +68,40 @@ export function readVisualPlan(flowDir: string): VisualPlan | null {
     return steps.length ? { ...(typeof raw.app === 'string' ? { app: raw.app } : {}), steps } : null
   } catch {
     return null
+  }
+}
+
+// the round when the steps failed and the AI took the screenshots itself
+export const fallbackFile = (flowDir: string) => path.join(runDir(flowDir), 'FALLBACK')
+export const fellBack = (flowDir: string) => existsSync(fallbackFile(flowDir))
+
+export function planView(flowDir: string): VisualPlanView | null {
+  const plan = readVisualPlan(flowDir)
+  if (!plan) return null
+  const after = readRun(flowDir, 'after')
+  const before = readRun(flowDir, 'before')
+  return {
+    ok: after ? after.ok : null,
+    fellBack: fellBack(flowDir),
+    steps: plan.steps.map((s, i) => {
+      const r = after?.steps.find((x) => x.id === s.id) ?? after?.steps[i]
+      const b = before?.steps.find((x) => x.id === s.id) ?? before?.steps[i]
+      return {
+        id: s.id,
+        title: s.title,
+        expect: s.expect,
+        check: s.check,
+        shots: r?.shots ?? [],
+        before: b?.shots ?? [],
+        ...(s.go ? { go: s.go } : {}),
+        ...(s.do ? { do: s.do } : {}),
+        ...(s.shot ? { shot: s.shot } : {}),
+        ...(s.proves ? { proves: s.proves } : {}),
+        ...(r ? { status: r.status } : {}),
+        ...(r?.error ? { error: r.error } : {}),
+        ...(r?.failShot ? { failShot: `run--${r.failShot}` } : {}),
+      }
+    }),
   }
 }
 
@@ -190,7 +224,7 @@ ${expect}
 
 What happened:
 ${lines(run, flowDir)}
-${failed.length && canFix ? `\nA step failed. Look at its error and the screenshot of what the page showed. If the code is wrong, fix it with a small local commit. If the step itself is wrong (a selector, a route, a timing), fix it in VISUAL-PLAN.json. mevo runs the plan once more after this turn when you changed either.\n` : ''}${failed.length && !canFix ? '\nA step failed; record it in the verdict, do not change code now.\n' : ''}
+${failed.length && canFix ? `\nA step failed. Look at its error and the screenshot of what the page showed. If the step itself is wrong (a selector, a route, a timing, a state it assumed), fix it in VISUAL-PLAN.json: mevo runs the plan once more after this turn. Don't change the code: when the app itself is wrong, mark that check fail and say what you saw; the supervisor sends code problems back to the lane.\n` : ''}${failed.length && !canFix ? '\nA step failed; record it in the verdict, do not change code now.\n' : ''}
 Then open every screenshot listed above with the Read tool and judge each against what its step
 should show. Write ${path.join(flowDir, 'VISUAL.json')}: one check per step that took screenshots,
 "what" = what it should show, "shot" = its first screenshot's file name, "result" = pass only

@@ -127,21 +127,33 @@ async function walletDecision(kind) {
 // connection requests are permitted, so they go through) and skip the backend sign-in prompt,
 // which needs a worker the local stack doesn't run. Best effort: on a miss you connect by hand.
 async function connectWallet(p) {
+  const address = walletAddress ?? '0xf39F'
   const button = p.getByRole('button', { name: /^connect( login| wallet)?$/i }).first()
-  const ok = await button.waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false)
-  if (!ok) return 'no Connect button on the first page'
-  const option = p.getByText('Headless Web3 Provider').first()
-  // the server-rendered button can be clickable before the app hydrates: retry until the dialog opens
-  const until = Date.now() + 40_000
-  while (Date.now() < until && !(await option.isVisible().catch(() => false))) {
-    if (!(await p.getByRole('dialog').first().isVisible().catch(() => false))) await button.click({ timeout: 5_000 }).catch(() => {})
-    await option.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {})
+  const shown = p.getByText(new RegExp(address.slice(0, 6), 'i')).first()
+  // the app may reconnect the test wallet by itself: then there is no Connect button to press
+  let state = null
+  const first = Date.now() + 30_000
+  while (!state && Date.now() < first) {
+    if (await shown.isVisible().catch(() => false)) state = 'connected'
+    else if (await button.isVisible().catch(() => false)) state = 'button'
+    else await p.waitForTimeout(500)
   }
-  if (!(await option.isVisible().catch(() => false))) return 'the connect dialog did not list "Headless Web3 Provider"'
-  await option.click()
-  if (!(await button.waitFor({ state: 'hidden', timeout: 20_000 }).then(() => true, () => false))) return 'the app did not finish connecting'
-  const verify = p.getByRole('alertdialog', { name: 'Verify your wallet' })
-  if (await verify.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true, () => false)) {
+  if (!state) return 'neither a Connect button nor the test address showed on the page'
+  if (state === 'button') {
+    const option = p.getByText('Headless Web3 Provider').first()
+    // the server-rendered button can be clickable before the app hydrates: retry until the dialog opens
+    const until = Date.now() + 40_000
+    while (Date.now() < until && !(await option.isVisible().catch(() => false))) {
+      if (!(await p.getByRole('dialog').first().isVisible().catch(() => false))) await button.click({ timeout: 5_000 }).catch(() => {})
+      await option.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {})
+    }
+    if (!(await option.isVisible().catch(() => false))) return 'the connect dialog did not list "Headless Web3 Provider"'
+    await option.click()
+    if (!(await button.waitFor({ state: 'hidden', timeout: 20_000 }).then(() => true, () => false))) return 'the app did not finish connecting'
+  }
+  // the backend sign-in prompt (its name changed over time): skipped, the local stack has no backend
+  const prompt = p.getByRole('alertdialog', { name: /verify your wallet|authenticate to continue/i }).first()
+  if (await prompt.waitFor({ state: 'visible', timeout: 10_000 }).then(() => true, () => false)) {
     await p.keyboard.type('skip', { delay: 50 })
     await p.locator('[data-slot="alert-dialog-overlay"]').waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {})
   }

@@ -64,7 +64,8 @@ export function passMetrics(t: Ticket, flowDir: string, touched: readonly string
     const m = re.exec(stat)
     return m ? Number(m[1]) : end >= 0 && journal[end]?.kind === 'ready' ? 0 : null
   }
-  const sup = [...pass].reverse().find((j) => j.title.startsWith('Supervisor'))
+  const isSup = (title: string) => /^Supervisor · /.test(title)
+  const sup = [...pass].reverse().find((j) => isSup(j.title))
   const local = [...pass].reverse().find((j) => /^Local checks (passed|failed)/.test(j.title))
   const visual = [...pass].reverse().find((j) => j.title.startsWith('Visual check ·') || j.title.startsWith('Visual plan'))
   return {
@@ -76,7 +77,7 @@ export function passMetrics(t: Ticket, flowDir: string, touched: readonly string
     minutes: started && ended ? Math.round((Date.parse(ended) - Date.parse(started)) / 6000) / 10 : null,
     laneMinutes: sum('minutes'),
     turns: pass.filter((j) => j.kind === 'run').length,
-    rounds: pass.filter((j) => j.title.startsWith('Supervisor')).length,
+    rounds: pass.filter((j) => isSup(j.title)).length,
     linesAdded: num(/(\d+) insertions?\(\+\)/),
     linesRemoved: num(/(\d+) deletions?\(-\)/),
     files: num(/(\d+) files? changed/),

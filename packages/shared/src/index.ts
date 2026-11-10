@@ -1002,6 +1002,31 @@ export interface ReplayView {
   readonly settingsNow: string
 }
 
+// The lane's test steps (VISUAL-PLAN.json) with what happened when mevo ran them, for the Visual tab
+export interface VisualPlanStepView {
+  readonly id: string
+  readonly title: string
+  readonly go?: string
+  readonly expect: string
+  readonly check: { readonly kind: TestCheckKind; readonly value?: string }
+  readonly do?: string
+  readonly shot?: { readonly viewports: readonly string[]; readonly before?: boolean }
+  readonly proves?: string
+  readonly status?: 'passed' | 'failed' | 'skipped'
+  readonly error?: string
+  readonly shots: readonly string[]
+  readonly before: readonly string[]
+  // a screenshot of what the page showed when the step failed (run--<name>)
+  readonly failShot?: string
+}
+export interface VisualPlanView {
+  readonly steps: readonly VisualPlanStepView[]
+  // null: not run yet
+  readonly ok: boolean | null
+  // the steps failed, so the AI took the screenshots itself this round
+  readonly fellBack: boolean
+}
+
 // The pipeline, stage by stage, as it runs now (config file + Settings). For the Pipeline tab and docs.
 export type PipelineStageId = 'intake' | 'implement' | 'review' | 'beforePr' | 'pr' | 'followUps'
 export interface PipelineStep {

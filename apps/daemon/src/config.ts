@@ -473,7 +473,13 @@ export function loadConfig(rootDir: string): Config {
   const e2e = cfg.e2e ?? detectE2e(cfg.repo.path)
   const withE2e = e2e === cfg.e2e ? cfg : { ...cfg, e2e }
   // the old switch for auto-starting small tickets is autopilot now
-  return withE2e.pipeline.autoStart && !withE2e.autopilot.enabled ? { ...withE2e, autopilot: { ...withE2e.autopilot, enabled: true } } : withE2e
+  const out = withE2e.pipeline.autoStart && !withE2e.autopilot.enabled ? { ...withE2e, autopilot: { ...withE2e.autopilot, enabled: true } } : withE2e
+  return laneShots(out)
+}
+
+// steps mode is paused: the lane takes the screenshots, whatever the config or Settings say
+function laneShots(cfg: Config): Config {
+  return cfg.shots?.mode === 'steps' ? { ...cfg, shots: { ...cfg.shots, mode: 'lane' } } : cfg
 }
 
 // whether ticketflow.config.json describes the pipeline with a stages block
@@ -508,5 +514,5 @@ export function effective(cfg: Config, s: Settings | undefined): Config {
   if (!s) return cfg
   const { since: _since, ...autopilot } = s.autopilot ?? {}
   const pipeline = { ...(s.pipeline ?? {}), ...(s.effort ? { effort: s.effort } : {}), ...(s.maxParallel ? { maxParallel: s.maxParallel } : {}) }
-  return merge(cfg as unknown as Json, { engines: s.engines ?? {}, roles: s.roles ?? {}, autopilot, budget: s.budget ?? {}, triage: s.triage ?? {}, readiness: s.readiness ?? {}, localChecks: s.localChecks ?? {}, afterFix: s.afterFix ?? {}, chat: s.chat ?? {}, principles: s.principles ?? {}, slack: s.slack ?? {}, figma: s.figma ?? {}, mascot: s.mascot ?? {}, daemon: s.daemon ?? {}, quality: s.quality ?? {}, github: s.github ?? {}, steps: s.steps ?? {}, shots: s.shots ?? {}, pipeline } as Json) as unknown as Config
+  return laneShots(merge(cfg as unknown as Json, { engines: s.engines ?? {}, roles: s.roles ?? {}, autopilot, budget: s.budget ?? {}, triage: s.triage ?? {}, readiness: s.readiness ?? {}, localChecks: s.localChecks ?? {}, afterFix: s.afterFix ?? {}, chat: s.chat ?? {}, principles: s.principles ?? {}, slack: s.slack ?? {}, figma: s.figma ?? {}, mascot: s.mascot ?? {}, daemon: s.daemon ?? {}, quality: s.quality ?? {}, github: s.github ?? {}, steps: s.steps ?? {}, shots: s.shots ?? {}, pipeline } as Json) as unknown as Config)
 }
