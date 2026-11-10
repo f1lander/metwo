@@ -7,7 +7,8 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { canFinishChecks } from '@ticketflow/shared'
 import type { EngineSetup } from './engine-setup.js'
 import type { Sessions } from './sessions.js'
-import type { AskReply, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, CycleView, FindScope, FoundIssue, LinearProject, Health, LearningProposal, LinearIssueView, PrinciplesUpdate, PrReview, HumanTestMode, HumanTestRun, PrView, Readiness, ServerEvent, TestPlan, Settings, SettingsView, StartChoice, Ticket, TicketDiff, TodayItem, Triage, NightShiftState, LinearSyncRow, MascotStatus, SlackChannel } from '@ticketflow/shared'
+import { STEP_CONTEXT, type StepId } from '@ticketflow/shared'
+import type { AskReply, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, CycleView, FindScope, FoundIssue, LinearProject, Health, LearningProposal, LinearIssueView, PrinciplesUpdate, PrReview, HumanTestMode, HumanTestRun, PrView, Readiness, ServerEvent, TestPlan, Settings, SettingsView, PipelineView, StartChoice, Ticket, TicketDiff, TodayItem, Triage, NightShiftState, LinearSyncRow, MascotStatus, SlackChannel } from '@ticketflow/shared'
 import { githubAvatar } from './avatars.js'
 import { knowledgeDir } from './config.js'
 import { Hono, type MiddlewareHandler } from 'hono'
@@ -151,6 +152,7 @@ export interface Controls {
   readonly mediaFile: (id: string, name: string) => string | null
   readonly stopAll: (shutdown: boolean) => Promise<{ stopped: readonly string[]; pending: string }>
   readonly settings: () => SettingsView
+  readonly pipeline: () => PipelineView
   readonly principlesUpdate: () => Promise<PrinciplesUpdate>
   readonly updateBranches: (ids: readonly string[]) => Promise<readonly BranchUpdateResult[]>
   readonly today: () => Promise<TodayItem[]>
@@ -642,6 +644,12 @@ export function startServer(port: number, host: string, rootDir: string, store: 
     return c.json({ ok: true })
   })
   app.get('/api/settings', (c) => c.json(controls.settings()))
+  app.get('/api/pipeline', (c) => c.json(controls.pipeline()))
+  app.get('/api/tickets/:id/prompt/:step', async (c) => {
+    const step = c.req.param('step')
+    if (!Object.hasOwn(STEP_CONTEXT, step)) return c.json({ ok: false, error: `step: ${Object.keys(STEP_CONTEXT).join(', ')}` }, 400)
+    return c.json(await runner.previewPrompt(c.req.param('id'), step as StepId))
+  })
   app.post('/api/settings', async (c) => {
     const patch = (await c.req.json()) as Settings
     if (patch.principles?.ref !== undefined && !/^[0-9a-f]{40}$/.test(patch.principles.ref)) return c.json({ ok: false, error: 'principles.ref must be a full commit sha' }, 400)
@@ -654,6 +662,17 @@ export function startServer(port: number, host: string, rootDir: string, store: 
     const lim = (v: unknown, lo: number, hi: number) => v === undefined || v === null || (Number.isInteger(v) && (v as number) >= lo && (v as number) <= hi)
     if (q !== undefined && (typeof q !== 'object' || !lim(q.targetLines, 20, 5000) || !lim(q.maxLines, 20, 5000) || !lim(q.minGreptile, 1, 5) || (q.securityLens !== undefined && typeof q.securityLens !== 'boolean')))
       return c.json({ ok: false, error: 'quality: { targetLines, maxLines: 20 to 5000 or null, minGreptile: 1 to 5 or null, securityLens: boolean }' }, 400)
+    const bool = (v: unknown) => v === undefined || typeof v === 'boolean'
+    const pl = patch.pipeline
+    if (pl !== undefined && (typeof pl !== 'object' || !bool(pl.reviewPass) || !bool(pl.draftOnFinish) || !bool(pl.autoUpdateFromMain) || !bool(pl.autoPullPr))) return c.json({ ok: false, error: 'pipeline: { reviewPass, draftOnFinish, autoUpdateFromMain, autoPullPr: boolean }' }, 400)
+    const gh = patch.github
+    if (gh !== undefined && (typeof gh !== 'object' || (gh.screenshots !== undefined && !['browser', 'gist', 'none'].includes(gh.screenshots)) || (gh.greptile !== undefined && (typeof gh.greptile !== 'object' || !bool(gh.greptile.enabled))) || (gh.reviewers !== undefined && (typeof gh.reviewers !== 'object' || !bool(gh.reviewers.auto) || !lim(gh.reviewers.max, 1, 10)))))
+      return c.json({ ok: false, error: 'github: { screenshots: browser|gist|none, greptile: { enabled }, reviewers: { auto, max: 1 to 10 } }' }, 400)
+    if (q?.quick !== undefined && (typeof q.quick !== 'string' || !/^[a-z]+(:[\w./:@-]+)?$/i.test(q.quick))) return c.json({ ok: false, error: 'quality.quick: like claude:sonnet or codex' }, 400)
+    if (!bool(patch.localChecks?.e2eAfterPr)) return c.json({ ok: false, error: 'localChecks.e2eAfterPr: true or false' }, 400)
+    const st = patch.steps
+    if (st !== undefined && (typeof st !== 'object' || Object.entries(st).some(([k, v]) => !Object.hasOwn(STEP_CONTEXT, k) || typeof v !== 'object' || v === null || (v.effort !== undefined && v.effort !== null && !['low', 'medium', 'high'].includes(v.effort)) || (v.instructions !== undefined && (typeof v.instructions !== 'string' || v.instructions.length > 4000)) || (v.context !== undefined && (typeof v.context !== 'object' || Object.entries(v.context).some(([b, on]) => !STEP_CONTEXT[k as StepId].includes(b as never) || typeof on !== 'boolean'))))))
+      return c.json({ ok: false, error: 'steps: { implement|review|supervisor|visual|quick: { effort: low|medium|high|null, instructions: text up to 4000, context: { <block>: boolean } } }' }, 400)
     const ms = patch.mascot
     if (ms !== undefined && (typeof ms !== 'object' || (ms.enabled !== undefined && typeof ms.enabled !== 'boolean') || (ms.coffee !== undefined && typeof ms.coffee !== 'boolean'))) return c.json({ ok: false, error: 'mascot: { enabled?: boolean, coffee?: boolean }' }, 400)
     const ns = patch.slack?.nightShift

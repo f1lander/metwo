@@ -821,7 +821,7 @@ export interface Settings {
   readonly autopilot?: { readonly enabled?: boolean; readonly autoPush?: boolean; readonly maxPerDay?: number; readonly since?: string }
   readonly triage?: { readonly auto?: boolean }
   readonly readiness?: { readonly auto?: boolean; readonly engine?: string; readonly minConfidence?: number }
-  readonly localChecks?: { readonly enabled?: boolean; readonly e2e?: 'related' | 'all' | 'off' }
+  readonly localChecks?: { readonly enabled?: boolean; readonly e2e?: 'related' | 'all' | 'off'; readonly e2eAfterPr?: boolean }
   readonly afterFix?: { readonly reply?: boolean; readonly resolve?: boolean; readonly rerequest?: boolean }
   readonly chat?: { readonly ask?: string }
   readonly principles?: { readonly enabled?: boolean; readonly ref?: string }
@@ -833,6 +833,11 @@ export interface Settings {
   readonly daemon?: { readonly autoRestart?: boolean }
   // small, reviewable PRs. null = no limit
   readonly quality?: QualitySettings
+  // pipeline switches that used to be config-file only
+  readonly pipeline?: PipelineSettings
+  // per AI step: effort, the context it gets and extra instructions
+  readonly steps?: { readonly [K in StepId]?: StepSettings }
+  readonly github?: { readonly screenshots?: 'browser' | 'gist' | 'none'; readonly greptile?: { readonly enabled?: boolean }; readonly reviewers?: { readonly auto?: boolean; readonly max?: number } }
   readonly budget?: { readonly daily?: number | null; readonly monthly?: number | null; readonly regulate?: boolean; readonly fallback?: string; readonly planFirst?: PlanFirst }
   readonly engines?: {
     readonly codex?: { readonly enabled?: boolean; readonly model?: string }
@@ -857,7 +862,7 @@ export interface SettingsValues {
   readonly autopilot: { readonly enabled: boolean; readonly autoPush: boolean; readonly maxPerDay: number }
   readonly triage: { readonly auto: boolean }
   readonly readiness: { readonly auto: boolean; readonly engine: string; readonly minConfidence: number }
-  readonly localChecks: { readonly enabled: boolean; readonly e2e: 'related' | 'all' | 'off' }
+  readonly localChecks: { readonly enabled: boolean; readonly e2e: 'related' | 'all' | 'off'; readonly e2eAfterPr: boolean }
   readonly afterFix: { readonly reply: boolean; readonly resolve: boolean; readonly rerequest: boolean }
   readonly chat: { readonly ask: string }
   readonly budget: { readonly daily: number | null; readonly monthly: number | null; readonly regulate: boolean; readonly fallback: string; readonly planFirst: PlanFirst }
@@ -868,13 +873,99 @@ export interface SettingsValues {
     readonly hermes: { readonly enabled: boolean; readonly provider: string; readonly model: string }
   }
   readonly roles: { readonly implementer: { readonly lite: string; readonly full: string }; readonly reviewer: string; readonly supervisor: string; readonly supervisorRounds: number; readonly visual: string; readonly curator: string }
-  readonly pipeline: { readonly effort: Effort; readonly maxParallel: number }
+  readonly pipeline: { readonly effort: Effort; readonly maxParallel: number } & Required<PipelineSettings>
+  readonly github: { readonly screenshots: 'browser' | 'gist' | 'none'; readonly greptile: { readonly enabled: boolean }; readonly reviewers: { readonly auto: boolean; readonly max: number } }
+  readonly steps: { readonly [K in StepId]: StepValues }
   readonly principles: { readonly enabled: boolean; readonly ref: string }
   readonly slack: Required<{ [K in keyof SlackSettings]-?: NonNullable<SlackSettings[K]> }>
   readonly figma: { readonly enabled: boolean }
   readonly mascot: { readonly enabled: boolean; readonly coffee: boolean }
   readonly daemon: { readonly autoRestart: boolean }
-  readonly quality: { readonly targetLines: number | null; readonly maxLines: number | null; readonly minGreptile: number | null; readonly securityLens: boolean }
+  readonly quality: { readonly targetLines: number | null; readonly maxLines: number | null; readonly minGreptile: number | null; readonly securityLens: boolean; readonly quick: string }
+}
+
+export interface PipelineSettings {
+  // a second engine reads the finished work before the gates
+  readonly reviewPass?: boolean
+  // the first time a lane finishes with no PR yet, push and open the draft PR
+  readonly draftOnFinish?: boolean
+  // merge the base into open PRs that are behind and conflict free
+  readonly autoUpdateFromMain?: boolean
+  // fast-forward commits made on GitHub into the worktree
+  readonly autoPullPr?: boolean
+}
+
+// The AI steps of the pipeline and what each one can be given. Every block is on by default.
+export type StepId = 'implement' | 'review' | 'supervisor' | 'visual' | 'quick'
+export type ContextBlock = 'linear' | 'slack' | 'figma' | 'readiness' | 'knowledge' | 'mcp' | 'principles' | 'learnings' | 'repoRules' | 'browser' | 'storybook' | 'video' | 'lenses' | 'feedback'
+export const STEP_CONTEXT: { readonly [K in StepId]: readonly ContextBlock[] } = {
+  implement: ['linear', 'slack', 'figma', 'feedback', 'readiness', 'knowledge', 'mcp', 'principles', 'learnings', 'repoRules', 'browser', 'storybook', 'video'],
+  review: ['knowledge', 'lenses', 'repoRules', 'feedback'],
+  supervisor: ['repoRules', 'figma', 'principles'],
+  visual: ['figma'],
+  quick: [],
+}
+export const CONTEXT_INFO: { readonly [K in ContextBlock]: { readonly label: string; readonly what: string } } = {
+  linear: { label: 'Linear discussion', what: 'Comments on the issue and the images in it' },
+  slack: { label: 'Slack threads', what: 'Slack threads linked in the ticket' },
+  figma: { label: 'Figma', what: 'Frames linked in the ticket, as the design reference' },
+  readiness: { label: 'Readiness read', what: "The readiness check's scope, decisions and open questions" },
+  knowledge: { label: 'Team knowledge', what: 'The wiki and knowledge sources that match the ticket' },
+  mcp: { label: 'Team MCP', what: 'Points the lane to the team MCP servers' },
+  principles: { label: 'Engineering principles', what: 'pstack principles and the playbook (when they are on)' },
+  learnings: { label: 'Team learnings', what: 'Rules you approved from past PR feedback' },
+  repoRules: { label: 'Repo rules', what: 'CLAUDE.md, STYLEGUIDE.md, .greptile and the other agent files' },
+  browser: { label: 'Browser check', what: 'Drive the app with Playwright to verify UI changes' },
+  storybook: { label: 'Storybook', what: 'Add stories and screenshot them' },
+  video: { label: 'Video', what: 'Record a short clip of the interaction' },
+  lenses: { label: 'Review lenses', what: 'Principles and knowledge used as review lenses' },
+  feedback: { label: 'Past PR feedback', what: 'What reviewers said before about the files touched' },
+}
+export interface StepSettings {
+  // null: the global effort (for quick: low)
+  readonly effort?: Effort | null
+  readonly instructions?: string
+  readonly context?: { readonly [K in ContextBlock]?: boolean }
+}
+export interface StepValues {
+  readonly effort: Effort | null
+  readonly instructions: string
+  readonly context: { readonly [K in ContextBlock]?: boolean }
+}
+// What a step would get for one ticket, built without running anything.
+export interface PromptPreview {
+  readonly step: StepId
+  readonly ticket: string
+  readonly engine: string
+  readonly effort: Effort
+  readonly blocks: readonly { readonly id: string; readonly title: string; readonly chars: number; readonly context?: ContextBlock; readonly on: boolean }[]
+  readonly text: string
+  // what is added only when it runs (downloads, Figma), and what the preview had to guess
+  readonly notes: readonly string[]
+}
+
+// The pipeline, stage by stage, as it runs now (config file + Settings). For the Pipeline tab and docs.
+export type PipelineStageId = 'intake' | 'implement' | 'review' | 'beforePr' | 'pr' | 'followUps'
+export interface PipelineStep {
+  readonly label: string
+  // what happens with the current values, in a few words
+  readonly value: string
+  readonly on: boolean
+  // where it lives in the stages config block, e.g. "review.supervisor.engine"
+  readonly key: string
+  // changeable in Settings (otherwise the config file only)
+  readonly setting: boolean
+}
+export interface PipelineStage {
+  readonly id: PipelineStageId
+  readonly title: string
+  readonly what: string
+  readonly steps: readonly PipelineStep[]
+}
+export interface PipelineView {
+  readonly stages: readonly PipelineStage[]
+  // true when ticketflow.config.json uses the stages block
+  readonly staged: boolean
 }
 
 export interface QualitySettings {
@@ -886,6 +977,8 @@ export interface QualitySettings {
   readonly minGreptile?: number | null
   // an extra security review when the diff touches signing, transactions, auth or HTML
   readonly securityLens?: boolean
+  // engine:model for quick fixes
+  readonly quick?: string
 }
 
 export interface PrSize {

@@ -6,7 +6,8 @@ import os from 'node:os'
 import path from 'node:path'
 import type { FixLogView, Health, PrMeta, Readiness, Ticket } from '@ticketflow/shared'
 import { classify } from './classifier.js'
-import { loadConfig, loadEnv } from './config.js'
+import { loadConfig, loadEnv, usesStages } from './config.js'
+import { pipelineView } from './pipeline-view.js'
 import { Linear, type LinearIssue } from './linear.js'
 import { computeDigest, formatDigest, scheduleDaily } from './digest.js'
 import { HealthTracker } from './health.js'
@@ -50,6 +51,7 @@ const env = loadEnv()
 // lanes, gates, installs and every other child process inherit process.env: keep the secrets out
 for (const key of ['LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'DASHBOARD_TOKEN', 'FIGMA_TOKEN', 'SLACK_BOT_TOKEN', 'SLACK_USER_TOKEN']) delete process.env[key]
 const cfg = loadConfig(env.rootDir)
+const staged = usesStages(env.rootDir)
 const store = new Store(env.dataDir)
 const live = new LiveLog()
 const linear = new Linear(env.linearApiKey, cfg.linear)
@@ -165,7 +167,7 @@ async function githubLogin(): Promise<string> {
     throw error
   }
 }
-const prSync = new PrSync(cfg, store, {
+const prSync = new PrSync(() => runner.config, store, {
   prComments: (t, c) => telegram.notifier.prComments(t, c),
   prCi: (t) => telegram.notifier.prCi(t),
   prMerged: (t) => {
@@ -181,7 +183,7 @@ prSync.onConflicting = (id) => void mainSync.checkOne(id)
 prSync.onResult = (ok, detail) => {
   health.prSync = ok ? { ...health.ok(), detail } : health.bad(detail)
 }
-const mainSync = new MainSync(cfg, store, runner)
+const mainSync = new MainSync(() => runner.config, store, runner)
 mainSync.onResult = (ok, detail) => {
   health.mainSync = ok ? { ...health.ok(), detail } : health.bad(detail)
 }
@@ -745,9 +747,10 @@ async function main(): Promise<void> {
       return results
     },
     settings: () => {
-      const pick = (c: typeof cfg) => ({ autopilot: c.autopilot, triage: c.triage, readiness: c.readiness, localChecks: { enabled: c.localChecks.enabled, e2e: c.localChecks.e2e }, afterFix: c.afterFix, chat: c.chat, budget: c.budget, engines: c.engines, roles: { ...c.roles }, pipeline: { effort: c.pipeline.effort, maxParallel: c.pipeline.maxParallel }, principles: { enabled: c.principles.enabled, ref: c.principles.ref }, slack: { threads: c.slack.threads, notify: c.slack.notify, announce: c.slack.announce, channel: c.slack.channel, mentions: c.slack.mentions, reviewSummaryAt: c.slack.reviewSummaryAt, rollCalls: c.slack.rollCalls, nightShift: c.slack.nightShift, autoNudge: c.slack.autoNudge }, figma: { enabled: c.figma.enabled }, mascot: c.mascot, daemon: c.daemon, quality: { targetLines: c.quality.targetLines, maxLines: c.quality.maxLines, minGreptile: c.quality.minGreptile, securityLens: c.quality.securityLens } })
+      const pick = (c: typeof cfg) => ({ autopilot: c.autopilot, triage: c.triage, readiness: c.readiness, localChecks: { enabled: c.localChecks.enabled, e2e: c.localChecks.e2e, e2eAfterPr: c.localChecks.e2eAfterPr }, afterFix: c.afterFix, chat: c.chat, budget: c.budget, engines: c.engines, roles: { ...c.roles }, pipeline: { effort: c.pipeline.effort, maxParallel: c.pipeline.maxParallel, reviewPass: c.pipeline.reviewPass, draftOnFinish: c.pipeline.draftOnFinish, autoUpdateFromMain: c.pipeline.autoUpdateFromMain, autoPullPr: c.pipeline.autoPullPr }, github: { screenshots: c.github.screenshots, greptile: { enabled: c.github.greptile.enabled }, reviewers: c.github.reviewers }, steps: c.steps, principles: { enabled: c.principles.enabled, ref: c.principles.ref }, slack: { threads: c.slack.threads, notify: c.slack.notify, announce: c.slack.announce, channel: c.slack.channel, mentions: c.slack.mentions, reviewSummaryAt: c.slack.reviewSummaryAt, rollCalls: c.slack.rollCalls, nightShift: c.slack.nightShift, autoNudge: c.slack.autoNudge }, figma: { enabled: c.figma.enabled }, mascot: c.mascot, daemon: c.daemon, quality: { targetLines: c.quality.targetLines, maxLines: c.quality.maxLines, minGreptile: c.quality.minGreptile, securityLens: c.quality.securityLens, quick: c.quality.quick } })
       return { overrides: store.snapshot().settings ?? {}, effective: pick(runner.config), defaults: pick(cfg) }
     },
+    pipeline: () => pipelineView(runner.config, staged),
   })
   if (cfg.roles.curator !== 'off') scheduleDaily(cfg.roles.curatorAt, () => curate().then(() => undefined, (e: unknown) => log.warn('curator failed', e)))
   telegram.curate = curate

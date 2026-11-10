@@ -22,7 +22,7 @@ const EXT: Record<string, string> = {
   'image/svg+xml': 'svg',
 }
 
-function imageUrls(...texts: readonly string[]): readonly string[] {
+export function imageUrls(...texts: readonly string[]): readonly string[] {
   const found = new Set<string>()
   for (const text of texts) {
     for (const m of text.matchAll(IMAGE_MD)) if (m[1]) found.add(m[1])

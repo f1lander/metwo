@@ -1,28 +1,26 @@
-import { type CheckState, type Effort, ENGINE_SETUP, type EngineSetupStatus, type Health, type PlanFirst, type PrinciplesUpdate, type NightShiftConfig, type RollCall, type SettingsView } from '@ticketflow/shared'
+import { type CheckState, ENGINE_SETUP, type EngineSetupStatus, type Health, type PlanFirst, type NightShiftConfig, type RollCall, type SettingsView, type Ticket } from '@ticketflow/shared'
 import { AnimatePresence, motion } from 'motion/react'
-import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { controls, loadSettings } from '../lib/api.js'
 import { href, type SettingsTab } from '../lib/route.js'
 import { type DaemonProcess, desktop, isDesktop } from '../lib/tauri.js'
-import { modelName } from './status.js'
-import { Button, ConfirmButton, Count, Dot, Mono, rise, Section, stagger, timeAgo } from './ui.js'
+import { Button, ConfirmButton, Dot, Mono, rise, Section, stagger, timeAgo } from './ui.js'
 import { failed, notice } from '../lib/notice.js'
 import { Mascot } from '@mevo/mascot/react'
+import { PipelineTab } from './PipelineTab.js'
+import { has, Panel, type Patch, type Reset, Row, type Run, type Save, Segmented, Select, TextField, Toggle, NumberField } from './settings-ui.js'
 
 const TABS: readonly { id: SettingsTab; label: string }[] = [
-  { id: 'general', label: 'General' },
-  { id: 'budget', label: 'Budget' },
-  { id: 'engines', label: 'Engines' },
+  { id: 'pipeline', label: 'Pipeline' },
+  { id: 'engines', label: 'Engines & budget' },
   { id: 'integrations', label: 'Integrations' },
+  { id: 'app', label: 'App' },
   { id: 'status', label: 'Status' },
 ]
 
-type Patch = Parameters<typeof controls.saveSettings>[0]
-type Run = (key: string, fn: () => Promise<unknown>) => () => Promise<void>
-
 // Everything you can change while mevo runs. Changes are saved in data/state.json and win over
 // ticketflow.config.json; "reset" goes back to the file's value.
-export function SettingsPage({ health, refresh, tab }: { health: Health | null; refresh: () => Promise<void>; tab: SettingsTab }) {
+export function SettingsPage({ health, refresh, tab, tickets }: { health: Health | null; refresh: () => Promise<void>; tab: SettingsTab; tickets: readonly Ticket[] }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [view, setView] = useState<SettingsView | null>(null)
   const reload = useCallback(async () => setView(await loadSettings().catch(() => null)), [])
@@ -71,12 +69,15 @@ export function SettingsPage({ health, refresh, tab }: { health: Health | null; 
 
         {!health || !view ? (
           <p className="text-xs text-muted">Loading…</p>
-        ) : tab === 'general' ? (
-          <General health={health} view={view} busy={busy} run={run} save={save} reset={reset} />
-        ) : tab === 'budget' ? (
-          <Budget health={health} view={view} save={save} reset={reset} />
+        ) : tab === 'pipeline' ? (
+          <PipelineTab health={health} view={view} busy={busy} run={run} save={save} reset={reset} tickets={tickets} />
         ) : tab === 'engines' ? (
-          <EnginesTab health={health} view={view} save={save} reset={reset} />
+          <>
+            <EnginesTab health={health} view={view} save={save} reset={reset} />
+            <Budget health={health} view={view} save={save} reset={reset} />
+          </>
+        ) : tab === 'app' ? (
+          <AppTab view={view} save={save} reset={reset} />
         ) : tab === 'integrations' ? (
           <Integrations health={health} busy={busy} run={run} view={view} save={save} reset={reset} />
         ) : (
@@ -87,227 +88,12 @@ export function SettingsPage({ health, refresh, tab }: { health: Health | null; 
   )
 }
 
-// --- building blocks ----------------------------------------------------------------------
-
-function Panel({ title, hint, children, className = '' }: { title: string; hint?: ReactNode; children: ReactNode; className?: string }) {
-  return (
-    <motion.section variants={rise} className={`flex flex-col rounded-lg border border-line bg-panel ${className}`}>
-      <div className="flex flex-col gap-0.5 border-b border-line px-4 py-3">
-        <h2 className="text-sm font-medium">{title}</h2>
-        {hint && <p className="text-xs leading-relaxed text-muted">{hint}</p>}
-      </div>
-      <div className="flex flex-col divide-y divide-line">{children}</div>
-    </motion.section>
-  )
-}
-
-function Row({ label, hint, changed, onReset, children }: { label: string; hint?: ReactNode; changed?: boolean; onReset?: () => void; children: ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-      <div className="min-w-0 flex-1 basis-64">
-        <div className="flex items-center gap-2 text-xs font-medium text-fg">
-          {label}
-          {changed && onReset && (
-            <button type="button" onClick={onReset} className="rounded bg-raised px-1.5 py-px text-[10px] font-normal text-muted hover:text-fg" title="back to the value in ticketflow.config.json">
-              changed · reset
-            </button>
-          )}
-        </div>
-        {hint && <p className="mt-0.5 text-[11px] leading-relaxed text-dim">{hint}</p>}
-      </div>
-      <div className="flex shrink-0 items-center gap-2">{children}</div>
-    </div>
-  )
-}
-
-function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)} className={`relative h-5 w-9 rounded-full transition-colors ${on ? 'bg-accent' : 'bg-line-2'}`}>
-      <motion.span layout transition={{ type: 'spring', stiffness: 600, damping: 34 }} className={`absolute top-0.5 size-4 rounded-full bg-white shadow ${on ? 'right-0.5' : 'left-0.5'}`} />
-    </button>
-  )
-}
-
-// Saves on Enter or when it loses focus; empty = no value.
-function NumberField({ value, onSave, prefix, placeholder, min = 0, label }: { value: number | null; onSave: (v: number | null) => void; prefix?: string; placeholder?: string; min?: number; label: string }) {
-  const [text, setText] = useState(value === null ? '' : String(value))
-  useEffect(() => setText(value === null ? '' : String(value)), [value])
-  const commit = () => {
-    const n = text.trim() === '' ? null : Number(text)
-    if (n !== null && (!Number.isFinite(n) || n < min)) return setText(value === null ? '' : String(value))
-    if (n !== value) onSave(n)
-  }
-  return (
-    <label className="flex items-center gap-1 rounded-md border border-line-2 bg-bg px-2 py-1 text-xs focus-within:border-accent">
-      {prefix && <span className="text-dim">{prefix}</span>}
-      <input aria-label={label} inputMode="decimal" value={text} placeholder={placeholder} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} className="w-20 bg-transparent text-fg outline-none tabular-nums" />
-    </label>
-  )
-}
-
-function TextField({ value, onSave, placeholder, label, width = 'w-56' }: { value: string; onSave: (v: string) => void; placeholder?: string; label: string; width?: string }) {
-  const [text, setText] = useState(value)
-  useEffect(() => setText(value), [value])
-  return (
-    <input
-      aria-label={label}
-      value={text}
-      placeholder={placeholder}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={() => text.trim() !== value && onSave(text.trim())}
-      onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-      className={`${width} rounded-md border border-line-2 bg-bg px-2 py-1 font-mono text-[11px] text-fg outline-none focus:border-accent`}
-    />
-  )
-}
-
-function Select({ value, options, onChange, label }: { value: string; options: readonly { value: string; label: string }[]; onChange: (v: string) => void; label: string }) {
-  const known = options.some((o) => o.value === value)
-  return (
-    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} className="rounded-md border border-line-2 bg-bg px-2 py-1 text-xs text-fg outline-none focus:border-accent">
-      {!known && <option value={value}>{value}</option>}
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  )
-}
-
-function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: readonly T[]; onChange: (v: T) => void; label: string }) {
-  return (
-    <div className="flex overflow-hidden rounded-md border border-line-2 text-xs" role="radiogroup" aria-label={label}>
-      {options.map((o) => (
-        <button key={o} type="button" role="radio" aria-checked={value === o} onClick={() => onChange(o)} className={`relative px-3 py-1 capitalize ${value === o ? 'text-fg' : 'text-muted hover:text-fg'}`}>
-          {value === o && <motion.span layoutId={`seg-${label}`} className="absolute inset-0 bg-raised" transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
-          <span className="relative">{o}</span>
-        </button>
-      ))}
-    </div>
-  )
-}
-
-const has = (obj: object | undefined, key: string) => Boolean(obj && key in obj)
-
 // --- tabs ---------------------------------------------------------------------------------
 
-function General({ health, view, busy, run, save, reset }: { health: Health; view: SettingsView; busy: string | null; run: Run; save: (p: Patch) => void; reset: (k: string) => void }) {
-  const ap = view.effective.autopilot
+function AppTab({ view, save, reset }: { view: SettingsView; save: Save; reset: Reset }) {
   const o = view.overrides
-  const q = view.effective.quality
   return (
     <>
-      <Panel
-        title="Autopilot"
-        hint="Small tickets (quick UI fixes, low-risk labels, estimate 2 or less) start by themselves and move to In Progress in Linear. Anything bigger, urgent, or labelled Security / High / Protocol still asks you."
-      >
-        <Row label="Autopilot" hint={ap.enabled ? `${health.lanes.autopilot?.today ?? 0} of ${ap.maxPerDay} taken today` : 'off: every ticket asks you first'} changed={has(o.autopilot, 'enabled')} onReset={() => reset('autopilot.enabled')}>
-          <Toggle label="autopilot" on={ap.enabled} onChange={(v) => save({ autopilot: { enabled: v } })} />
-        </Row>
-        <Row label="Open the draft PR by itself" hint="Only when the gates pass, the supervisor says pass and the visual check is verified. Otherwise it waits for your push and tells you why. It never marks a PR ready for review." changed={has(o.autopilot, 'autoPush')} onReset={() => reset('autopilot.autoPush')}>
-          <Toggle label="auto draft PR" on={ap.autoPush} onChange={(v) => save({ autopilot: { autoPush: v } })} />
-        </Row>
-        <Row label="Tickets per day" hint="After this many, new small tickets wait for you." changed={has(o.autopilot, 'maxPerDay')} onReset={() => reset('autopilot.maxPerDay')}>
-          <NumberField label="tickets per day" value={ap.maxPerDay} min={1} onSave={(v) => v && save({ autopilot: { maxPerDay: Math.round(v) } })} />
-        </Row>
-        <Row label="Check readiness before starting" hint={`A cheap model reads each new ticket and its Linear discussion: ready, needs clarification or hold. Autopilot only starts it when it is ready and at least ${view.effective.readiness.minConfidence}% sure. Your own starts just get a warning.`} changed={has(o.readiness, 'auto')} onReset={() => reset('readiness.auto')}>
-          <Toggle label="readiness check" on={view.effective.readiness.auto} onChange={(v) => save({ readiness: { auto: v } })} />
-        </Row>
-        <Row label="Readiness engine" hint="Auto: OpenCode with its model when it is enabled (free models work), otherwise Claude Haiku. It gets no tools, only the ticket text." changed={has(o.readiness, 'engine')} onReset={() => reset('readiness.engine')}>
-          <Select label="readiness engine" value={view.effective.readiness.engine} options={[{ value: 'auto', label: 'Auto' }, { value: 'opencode', label: 'OpenCode' }, { value: 'claude:haiku', label: 'Claude Haiku' }, { value: 'claude:sonnet', label: 'Claude Sonnet' }, { value: 'off', label: 'Off' }]} onChange={(v) => save({ readiness: { engine: v } })} />
-        </Row>
-        <Row label="Questions in the ticket chat" hint="Ask mode answers from the ticket's history (commits, review threads, checks) and read-only git. No lane runs and nothing changes." changed={has(o.chat, 'ask')} onReset={() => reset('chat.ask')}>
-          <Select label="chat engine" value={view.effective.chat.ask} options={[{ value: 'claude:sonnet', label: 'Claude Sonnet' }, { value: 'claude:haiku', label: 'Claude Haiku' }, { value: 'claude:opus', label: 'Claude Opus' }, { value: 'codex', label: 'Codex (read-only)' }]} onChange={(v) => save({ chat: { ask: v } })} />
-        </Row>
-        <Row label="Autopilot needs" hint="Confidence the readiness check must reach before autopilot starts a ticket." changed={has(o.readiness, 'minConfidence')} onReset={() => reset('readiness.minConfidence')}>
-          <NumberField label="minimum confidence" value={view.effective.readiness.minConfidence} min={0} onSave={(v) => v !== null && save({ readiness: { minConfidence: Math.max(0, Math.min(100, Math.round(v))) } })} />
-        </Row>
-        <Row label="Triage the cycle by itself" hint="AI sizes new and edited cycle issues a few times a day. Off: only when you press Triage. Each run counts in the budget." changed={has(view.overrides, 'triage')} onReset={() => reset('triage')}>
-          <Toggle label="auto triage" on={view.effective.triage?.auto ?? false} onChange={(v) => save({ triage: { auto: v } })} />
-        </Row>
-      </Panel>
-
-      <Panel title="After you address review comments" hint="What happens on GitHub when a push answers a reviewer who requested changes. The Reviewers card on the ticket also has a button for it.">
-        <Row label="Reply in the threads" hint={'"Addressed in <commit>" in each thread you dealt with, unless you already answered it.'} changed={has(o.afterFix, 'reply')} onReset={() => reset('afterFix.reply')}>
-          <Toggle label="reply in threads" on={view.effective.afterFix.reply} onChange={(v) => save({ afterFix: { reply: v } })} />
-        </Row>
-        <Row label="Resolve the threads" hint="Off by default: many reviewers like to resolve their own threads after checking." changed={has(o.afterFix, 'resolve')} onReset={() => reset('afterFix.resolve')}>
-          <Toggle label="resolve threads" on={view.effective.afterFix.resolve} onChange={(v) => save({ afterFix: { resolve: v } })} />
-        </Row>
-        <Row label="Ask for a re-review" hint="Once every thread from a reviewer who requested changes is answered, re-request their review so GitHub shows it on their list." changed={has(o.afterFix, 'rerequest')} onReset={() => reset('afterFix.rerequest')}>
-          <Toggle label="re-request review" on={view.effective.afterFix.rerequest} onChange={(v) => save({ afterFix: { rerequest: v } })} />
-        </Row>
-      </Panel>
-
-      <Panel title="Before the PR" hint="What CI runs, run here first: a red result keeps the PR closed until the lane fixes it or you push anyway.">
-        <Row label="Local checks" hint="Typecheck, lint and tests (reused when the supervisor just ran them green), then e2e. Runs when a lane finishes and before any push." changed={has(o.localChecks, 'enabled')} onReset={() => reset('localChecks.enabled')}>
-          <Toggle label="local checks" on={view.effective.localChecks.enabled} onChange={(v) => save({ localChecks: { enabled: v } })} />
-        </Row>
-        <Row label="e2e specs" hint="Related: only the specs for the feature the change touches (registration changes run registration*.spec). All: every spec CI would run for that app, about an hour. One e2e run at a time; they share the local chain." changed={has(o.localChecks, 'e2e')} onReset={() => reset('localChecks.e2e')}>
-          <Segmented label="e2e specs" value={view.effective.localChecks.e2e} options={['related', 'all', 'off'] as const} onChange={(v) => save({ localChecks: { e2e: v } })} />
-        </Row>
-      </Panel>
-
-      <Panel title="Reviewable PRs" hint="Small PRs a person can review in one sitting: about 200 changed lines is the sweet spot, 400 the most. Lockfiles and snapshots are not counted. Empty means no limit.">
-        <Row label="Aim for" hint="Lines the lane aims for. Bigger work: it does the first slice that stands on its own and lists the rest as follow-ups." changed={has(o.quality, 'targetLines')} onReset={() => reset('quality.targetLines')}>
-          <NumberField label="target lines" placeholder="no limit" min={20} value={q.targetLines} onSave={(n) => save({ quality: { targetLines: n === null ? null : Math.round(n) } })} />
-        </Row>
-        <Row label="Most" hint="Over it the PR is not marked ready for review (you can still do it anyway) and autopilot stops before the PR." changed={has(o.quality, 'maxLines')} onReset={() => reset('quality.maxLines')}>
-          <NumberField label="max lines" placeholder="no limit" min={20} value={q.maxLines} onSave={(n) => save({ quality: { maxLines: n === null ? null : Math.round(n) } })} />
-        </Row>
-        <Row label="Greptile at least" hint="Score out of 5 a PR needs before it is marked ready for review." changed={has(o.quality, 'minGreptile')} onReset={() => reset('quality.minGreptile')}>
-          <NumberField label="minimum Greptile score" placeholder="none" min={1} value={q.minGreptile} onSave={(n) => save({ quality: { minGreptile: n === null ? null : Math.min(5, Math.round(n)) } })} />
-        </Row>
-        <Row label="Security lens" hint="When the diff adds signing, transactions, approvals, auth, storage or raw HTML, the review pass also reads it like a bug bounty researcher." changed={has(o.quality, 'securityLens')} onReset={() => reset('quality.securityLens')}>
-          <Toggle label="security lens" on={q.securityLens} onChange={(v) => save({ quality: { securityLens: v } })} />
-        </Row>
-      </Panel>
-
-      <Panel title="Lanes" hint={`${health.lanes.active.length} of ${health.lanes.max} running${health.lanes.active.length ? `: ${health.lanes.active.join(', ')}` : ''}${health.lanes.paused ? ' · paused' : ''}`}>
-        <Row label="Queue" hint={health.lanes.paused ? 'paused: running lanes finish, nothing new starts' : 'accepting work'}>
-          {health.lanes.paused ? (
-            <Button variant="primary" disabled={busy !== null} onClick={run('resume', () => controls.resume())}>
-              Resume
-            </Button>
-          ) : (
-            <Button disabled={busy !== null} onClick={run('pause', () => controls.pause())}>
-              Pause
-            </Button>
-          )}
-        </Row>
-        <Row label="Lanes at once" hint="Each one can run a dev server, Storybook and a browser." changed={has(o, 'maxParallel')} onReset={() => reset('maxParallel')}>
-          <div className="flex items-center overflow-hidden rounded-md border border-line-2">
-            <button type="button" aria-label="fewer lanes" className="px-2.5 py-1 text-muted hover:bg-raised hover:text-fg disabled:opacity-40" disabled={busy !== null || health.lanes.max <= 1} onClick={run('parallel', () => controls.parallel(health.lanes.max - 1))}>
-              −
-            </button>
-            <span className="w-7 text-center text-xs font-medium tabular-nums">
-              <Count value={health.lanes.max} />
-            </span>
-            <button type="button" aria-label="more lanes" className="px-2.5 py-1 text-muted hover:bg-raised hover:text-fg disabled:opacity-40" disabled={busy !== null || health.lanes.max >= 8} onClick={run('parallel', () => controls.parallel(health.lanes.max + 1))}>
-              +
-            </button>
-          </div>
-        </Row>
-        <Row label="Effort" hint="How hard every lane and review thinks. Max stays a per-ticket choice (Start max). The budget can lower it." changed={has(o, 'effort')} onReset={() => reset('effort')}>
-          <Segmented<Effort> label="effort" value={view.effective.pipeline.effort} options={['low', 'medium', 'high']} onChange={(e) => void run('effort', () => controls.effort(e))()} />
-        </Row>
-        {health.lanes.models && (
-          <Row label="Claude models" hint="Set per lane in the config file (models).">
-            <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted">
-              {(['lite', 'full', 'review'] as const).map((k) => (
-                <Fragment key={k}>
-                  <span className="text-fg-2">{k}</span>
-                  <span className="whitespace-nowrap">{modelName(health.lanes.models?.[k].model)}</span>
-                </Fragment>
-              ))}
-            </div>
-          </Row>
-        )}
-        <Row label="Restart for new code" hint="When mevo's code changes on disk (a pull, a fix), it restarts by itself as soon as no lane, check or hand test is running, so nothing runs on old code. Only when the desktop app runs mevo; from a terminal the app just tells you." changed={has(o.daemon, 'autoRestart')} onReset={() => reset('daemon.autoRestart')}>
-          <Toggle label="restart for new code" on={view.effective.daemon.autoRestart} onChange={(v) => save({ daemon: { autoRestart: v } })} />
-        </Row>
-      </Panel>
       <Panel title="Mo" hint="The o of the logo, out in the app: he is the Tell the agent button, reacts to merges, failures and questions, and sleeps during Night Shift. Drag him to any corner; ✕ puts him back in the logo and a click on the logo brings him out.">
         <Row label="Show Mo" hint="Off: the classic Tell the agent button." changed={has(o.mascot, 'enabled')} onReset={() => reset('mascot.enabled')}>
           <Mascot state="idle" width={34} />
@@ -317,111 +103,12 @@ function General({ health, view, busy, run, save, reset }: { health: Health; vie
           <Toggle label="coffee game" on={view.effective.mascot.coffee} onChange={(v) => save({ mascot: { coffee: v } })} />
         </Row>
       </Panel>
-
-      <Principles health={health} view={view} save={save} reset={reset} />
+      <Panel title="Daemon">
+        <Row label="Restart for new code" hint="When mevo's code changes on disk (a pull, a fix), it restarts by itself as soon as no lane, check or hand test is running, so nothing runs on old code. Only when the desktop app runs mevo; from a terminal the app just tells you." changed={has(o.daemon, 'autoRestart')} onReset={() => reset('daemon.autoRestart')}>
+          <Toggle label="restart for new code" on={view.effective.daemon.autoRestart} onChange={(v) => save({ daemon: { autoRestart: v } })} />
+        </Row>
+      </Panel>
     </>
-  )
-}
-
-const PHASE_LABEL = { implement: 'Every lane', bug: 'Bug playbook', feature: 'Feature playbook', refactor: 'Refactor playbook', perf: 'Perf playbook', visual: 'Visual playbook', review: 'Review lenses', prose: 'Prose' } as const
-
-// pstack, pinned to one commit. A newer commit only comes in after you read its diff and accept it.
-function Principles({ health, view, save, reset }: { health: Health; view: SettingsView; save: (p: Patch) => void; reset: (k: string) => void }) {
-  const p = health.lanes.principles
-  const on = view.effective.principles?.enabled ?? false
-  const [update, setUpdate] = useState<PrinciplesUpdate | null>(null)
-  const [checking, setChecking] = useState(false)
-  if (!p) return null
-  const web = p.repo.startsWith('https://github.com/') ? p.repo.replace(/\.git$/, '') : null
-  const check = async () => {
-    setChecking(true)
-    try {
-      const u = await controls.principlesUpdate()
-      setUpdate(u)
-      if (u.latest === u.current) notice({ title: 'pstack is up to date', tone: 'ok' })
-    } catch (err) {
-      failed(err)
-    } finally {
-      setChecking(false)
-    }
-  }
-  const state = !on ? 'off' : p.error ? p.error : p.head === p.ref ? `on disk${p.syncedAt ? `, checked ${timeAgo(p.syncedAt)}` : ''}` : 'fetching…'
-  return (
-    <Panel
-      title="Engineering principles"
-      hint={
-        <>
-          {web ? (
-            <a href={web} target="_blank" rel="noreferrer" className="text-fg-2 underline decoration-line-2 underline-offset-2 hover:text-fg">
-              pstack
-            </a>
-          ) : (
-            'pstack'
-          )}{' '}
-          (MIT). Lanes read these files before they code and follow a playbook picked from the ticket (bug, feature, refactor, perf or visual match), the review pass and PR reviews apply them as lenses, and the supervisor checks the diff against them. Only the markdown is used; their steps that spawn agents, push or open PRs are ignored.
-        </>
-      }
-    >
-      <Row label="Use them on every ticket" hint="Each ticket can still turn them off or on for itself, from its Overview." changed={has(view.overrides.principles, 'enabled')} onReset={() => reset('principles.enabled')}>
-        <Toggle label="engineering principles" on={on} onChange={(v) => save({ principles: { enabled: v } })} />
-      </Row>
-      <Row label="Pinned commit" hint={<span className={on && p.error ? 'text-bad' : ''}>{state}. Nothing changes until you accept a newer commit.</span>} changed={has(view.overrides.principles, 'ref')} onReset={() => reset('principles.ref')}>
-        {web ? (
-          <a href={`${web}/commit/${p.ref}`} target="_blank" rel="noreferrer" className="hover:text-fg">
-            <Mono className="text-fg-2">{p.ref.slice(0, 7)}</Mono>
-          </a>
-        ) : (
-          <Mono className="text-fg-2">{p.ref.slice(0, 7)}</Mono>
-        )}
-        <Button disabled={!on || checking} onClick={() => void check()}>
-          {checking ? 'Checking…' : 'Check for updates'}
-        </Button>
-      </Row>
-      <AnimatePresence initial={false}>
-        {update && update.latest !== update.current && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-            <div className="flex flex-col gap-2 px-4 py-3">
-              <p className="text-xs text-fg-2">
-                Newer commit <Mono>{update.latest.slice(0, 7)}</Mono>. Read what changed in the files mevo uses before you accept it: it becomes part of every lane's prompt.
-              </p>
-              {update.stat && <pre className="max-h-40 overflow-auto rounded-md border border-line bg-sunk px-3 py-2 font-mono text-[11px] leading-relaxed text-muted">{update.stat}</pre>}
-              <details className="text-xs" open={update.diff.length < 4000}>
-                <summary className="cursor-pointer text-muted">{update.diff ? 'Diff of the files mevo uses' : 'The files mevo uses did not change'}</summary>
-                {update.diff && <pre className="mt-2 max-h-96 overflow-auto rounded-md border border-line bg-sunk px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-fg-2">{update.diff}</pre>}
-              </details>
-              <div className="flex gap-2">
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    save({ principles: { ref: update.latest } })
-                    setUpdate(null)
-                  }}
-                >
-                  Accept {update.latest.slice(0, 7)}
-                </Button>
-                <Button onClick={() => setUpdate(null)}>Keep {update.current.slice(0, 7)}</Button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <Row label="What each step reads">
-        <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11px]">
-          {(Object.keys(PHASE_LABEL) as (keyof typeof PHASE_LABEL)[]).map((k) => (
-            <Fragment key={k}>
-              <span className="text-fg-2">{PHASE_LABEL[k]}</span>
-              <span className="flex max-w-md flex-wrap gap-1">
-                {(p.files[k] ?? []).map((f) => (
-                  <span key={f.path} title={f.present ? f.path : `${f.path}: not in this commit`} className={`rounded bg-raised px-1.5 py-px font-mono ${f.present || !p.head ? 'text-muted' : 'text-dim line-through'}`}>
-                    {f.path.replace(/^principle-/, '').replace(/\/SKILL\.md$|\.md$/, '')}
-                  </span>
-                ))}
-              </span>
-            </Fragment>
-          ))}
-        </div>
-      </Row>
-    </Panel>
   )
 }
 
@@ -515,7 +202,7 @@ function EnginesTab({ health, view, save, reset }: { health: Health; view: Setti
   const status = new Map((health.lanes.engines ?? []).map((x) => [x.id, x]))
   const enabled = ['claude', ...(['codex', 'cursor', 'opencode', 'hermes'] as const).filter((id) => e[id].enabled)]
   const engineOptions = enabled.map((id) => ({ value: id, label: id }))
-  const role = (key: 'reviewer' | 'supervisor' | 'visual' | 'curator', extra: readonly { value: string; label: string }[], label: string, hint: string) => (
+  const role = (key: 'curator', extra: readonly { value: string; label: string }[], label: string, hint: string) => (
     <Row label={label} hint={hint} changed={has(ro, key)} onReset={() => reset(`roles.${key}`)}>
       <Select label={label} value={r[key]} options={[...extra, ...engineOptions]} onChange={(v) => save({ roles: { [key]: v } })} />
     </Row>
@@ -538,19 +225,10 @@ function EnginesTab({ health, view, save, reset }: { health: Health; view: Setti
         ))}
       </Panel>
 
-      <Panel title="Roles" hint="Which engine does what. A role on an engine that is turned off falls back to Claude.">
-        <Row label="Implementer · lite" changed={has(ro?.implementer, 'lite')} onReset={() => reset('roles.implementer.lite')}>
-          <Select label="lite implementer" value={r.implementer.lite} options={engineOptions} onChange={(v) => save({ roles: { implementer: { lite: v } } })} />
+      <Panel title="Other roles" hint="The engines for the pipeline's own steps are in Pipeline, stage by stage. A role on an engine that is turned off falls back to Claude.">
+        <Row label="Questions in the ticket chat" hint="Ask mode answers from the ticket's history (commits, review threads, checks) and read-only git. No lane runs and nothing changes." changed={has(view.overrides.chat, 'ask')} onReset={() => reset('chat.ask')}>
+          <Select label="chat engine" value={view.effective.chat.ask} options={[{ value: 'claude:sonnet', label: 'Claude Sonnet' }, { value: 'claude:haiku', label: 'Claude Haiku' }, { value: 'claude:opus', label: 'Claude Opus' }, { value: 'codex', label: 'Codex (read-only)' }]} onChange={(v) => save({ chat: { ask: v } })} />
         </Row>
-        <Row label="Implementer · full" changed={has(ro?.implementer, 'full')} onReset={() => reset('roles.implementer.full')}>
-          <Select label="full implementer" value={r.implementer.full} options={engineOptions} onChange={(v) => save({ roles: { implementer: { full: v } } })} />
-        </Row>
-        {role('reviewer', [], 'Reviewer', 'The review pass on finished work, and the PRs you review.')}
-        {role('supervisor', [{ value: 'opposite', label: 'opposite vendor' }, { value: 'off', label: 'off' }], 'Supervisor', 'Checks finished work against the ticket after mevo re-runs the gates.')}
-        <Row label="Supervisor rounds" hint="How many times concerns go back to the implementer." changed={has(ro, 'supervisorRounds')} onReset={() => reset('roles.supervisorRounds')}>
-          <NumberField label="supervisor rounds" value={r.supervisorRounds} onSave={(v) => v !== null && save({ roles: { supervisorRounds: Math.round(v) } })} />
-        </Row>
-        {role('visual', [], 'Visual check', 'The Run visual check button.')}
         {role('curator', [{ value: 'off', label: 'off' }], 'Learnings curator', 'Reads PR feedback once a day and proposes team rules.')}
       </Panel>
     </>

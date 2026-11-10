@@ -68,7 +68,7 @@ export function StatusBar({ health, connected, night = false }: { health: Health
       )}
       <span className="ml-auto" />
       {lanes && (
-        <a href={href.settings('general')} className={item} title="lanes">
+        <a href={href.settings('pipeline')} className={item} title="lanes">
           <Dot ok={!lanes.paused} pulse={lanes.active.length > 0} />
           <span className="inline-flex items-baseline">
             <Count value={lanes.active.length} />/{lanes.max}
@@ -78,13 +78,13 @@ export function StatusBar({ health, connected, night = false }: { health: Health
         </a>
       )}
       {lanes?.autopilot?.enabled && (
-        <a href={href.settings('general')} className={item} title="autopilot">
+        <a href={href.settings('pipeline')} className={item} title="autopilot">
           <span className="text-accent-fg">autopilot</span>
           {lanes.autopilot.today}/{lanes.autopilot.maxPerDay} today
         </a>
       )}
       {b && (
-        <a href={href.settings('budget')} className={`${item} pr-3`} title="budget">
+        <a href={href.settings('engines')} className={`${item} pr-3`} title="budget">
           <span className={tone}>{money(b.day.limit || !b.month.limit ? b.day.spent : b.month.spent)}</span>
           {limited ? <span>/ {money((b.day.limit ?? b.month.limit) as number)}{b.day.limit ? ' today' : ' this month'}</span> : <span>today</span>}
           {b.level !== 'normal' && b.regulate && <span className={tone}>· {b.level === 'over' ? `on ${b.fallback ?? 'Claude'}` : 'saving'}</span>}

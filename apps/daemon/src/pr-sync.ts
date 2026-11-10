@@ -29,7 +29,7 @@ export class PrSync {
   // reads why CI went red before the notification goes out, so it can say so
   onCiRed: ((id: string) => Promise<unknown>) | null = null
 
-  constructor(private readonly cfg: Config, private readonly store: Store, private readonly notify: PrNotifier) {}
+  constructor(private readonly config: () => Config, private readonly store: Store, private readonly notify: PrNotifier) {}
 
   onResult: ((ok: boolean, detail: string) => void) | null = null
   // The PR's stories on the Storybook branch preview, listed in the body under its marker and kept
@@ -41,7 +41,7 @@ export class PrSync {
     try {
       const entries = await loadStoryIndex(sb.url)
       if (!entries.length) return
-      const changed = (await git(['diff', '--name-only', `origin/${this.cfg.repo.baseBranch}...HEAD`], worktree)).split('\n').filter(Boolean)
+      const changed = (await git(['diff', '--name-only', `origin/${this.config().repo.baseBranch}...HEAD`], worktree)).split('\n').filter(Boolean)
       const stories = storiesForChange(entries, changed)
       const next = withStories(body, storiesBlock(sb.url, stories))
       if (next) {
@@ -91,7 +91,7 @@ export class PrSync {
       if (!hot) this.onResult?.(true, 'no open PRs')
       return
     }
-    if (!this.me) this.me = await ghLogin(this.cfg.repo.path).catch(() => '')
+    if (!this.me) this.me = await ghLogin(this.config().repo.path).catch(() => '')
     let errors = 0
     const queue = [...open]
     const worker = async () => {
@@ -117,7 +117,7 @@ export class PrSync {
       const { unpushed: _u, ...same } = ticket
       return this.store.upsert({ ...same, pushedSha: headSha })
     }
-    const r = this.cfg.pipeline.autoPullPr ? await pullPrBranch(worktree, ticket.branch, ticket.status, false) : { outcome: 'diverged' as const, commits: 0, remote: headSha, text: 'Automatic pulls are off; use Pull from GitHub.' }
+    const r = this.config().pipeline.autoPullPr ? await pullPrBranch(worktree, ticket.branch, ticket.status, false) : { outcome: 'diverged' as const, commits: 0, remote: headSha, text: 'Automatic pulls are off; use Pull from GitHub.' }
     const { behindPr: _b, ...rest } = ticket
     if (r.outcome === 'current' || r.outcome === 'ahead') {
       // ahead: the fixes are here, not on the PR yet
@@ -157,7 +157,7 @@ export class PrSync {
     const worktree = ticket.worktree
     if (!worktree) return
     // by number once known, so a renamed head branch still finds its PR
-    const pr = await fetchPrInfo(worktree, ticket.pr?.number ? String(ticket.pr.number) : ticket.branch, this.cfg.github.greptile.bot)
+    const pr = await fetchPrInfo(worktree, ticket.pr?.number ? String(ticket.pr.number) : ticket.branch, this.config().github.greptile.bot)
     if (!pr) return
 
     const known = new Set((ticket.pr?.comments ?? []).map((c) => c.id))
@@ -266,7 +266,7 @@ export class PrSync {
       await this.notify.prMerged(done)
       return
     }
-    const qaLabel = this.cfg.github.qa.label.toLowerCase()
+    const qaLabel = this.config().github.qa.label.toLowerCase()
     const qaNew = Boolean(ticket.pr) && (pr.labels ?? []).some((l) => l.toLowerCase() === qaLabel) && !(ticket.pr?.labels ?? []).some((l) => l.toLowerCase() === qaLabel)
     // threads, reviewers and re-review requests: what reviewers are waiting on
     const conversation = pr.state === 'OPEN' ? await prConversation(worktree, pr.number).catch((e: unknown) => (log.warn(`${ticket.id}: review threads not read`, e), null)) : null
@@ -293,7 +293,7 @@ export class PrSync {
       await this.notify.prCi(this.store.get(ticket.id) ?? updated)
     }
     if (qaNew) {
-      this.store.journal(ticket.id, { kind: 'pr', title: `${this.cfg.github.qa.label} on the PR`, meta: { url: pr.url } })
+      this.store.journal(ticket.id, { kind: 'pr', title: `${this.config().github.qa.label} on the PR`, meta: { url: pr.url } })
       await this.notify.qaRequested(this.store.get(ticket.id) ?? updated)
     }
   }

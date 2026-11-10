@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
-import type { SupervisionReport, Ticket } from '@ticketflow/shared'
-import type { Config } from '../config.js'
+import type { ContextBlock, SupervisionReport, Ticket } from '@ticketflow/shared'
+import { type Config, ctxOn } from '../config.js'
+import { stepInstructions } from './brief.js'
 import { sh } from './shell.js'
 import { repoRules } from '../knowledge.js'
 
@@ -31,14 +32,14 @@ export async function runGates(cfg: Config, worktree: string, signal?: AbortSign
 const tail = (text: string) => text.trim().split('\n').slice(-15).join('\n')
 
 export function supervisorPrompt(cfg: Config, ticket: Ticket, worktree: string, flowDir: string, gates: readonly Gate[]): string {
+  const on = (b: ContextBlock) => ctxOn(cfg, 'supervisor', b)
   return `You are the supervisor for ${ticket.id} (${ticket.title}). Another engine implemented it in ${worktree}; your job is to check that work, not to redo it. Do NOT modify any file and do NOT commit.
 
 Read, in this order:
 1. ${path.join(flowDir, 'brief.md')}: the ticket, its Linear discussion and the rules the implementer followed.
 2. The diff: git diff origin/${cfg.repo.baseBranch}...HEAD (and git log for the commit messages).
 3. ${path.join(worktree, 'ARM-SUMMARY.md')} and ${path.join(flowDir, 'PR-BODY.md')}: what the implementer claims.
-4. ${path.join(flowDir, 'VISUAL.json')} and every screenshot it names in ${path.join(flowDir, 'shots')}/ (open them with your file reader).
-5. The repo rules at the repo root: ${repoRules(cfg.repo.path).join(', ') || 'none; judge by the code around the change'}.
+4. ${path.join(flowDir, 'VISUAL.json')} and every screenshot it names in ${path.join(flowDir, 'shots')}/ (open them with your file reader).${on('repoRules') ? `\n5. The repo rules at the repo root: ${repoRules(cfg.repo.path).join(', ') || 'none; judge by the code around the change'}.` : ''}
 
 mevo already re-ran the gates, all green:
 ${gates.map((g) => `- ${g.name}: ok`).join('\n')}
@@ -48,8 +49,7 @@ Judge:
 - Scope: anything changed that the ticket did not ask for.
 - Correctness risks a reviewer or Greptile would flag (the .greptile rules are the bar).
 - Whether the visual verdict is honest: look at the screenshots yourself.
-- If brief.md has a "Design reference (Figma)" section: open the Figma images and compare them with the after screenshots yourself. A visible difference the summary does not explain is a P2 finding.
-- If brief.md has an "Engineering principles" section, whether the diff follows them: the smallest change, a root-cause fix instead of a guard, tests that assert behavior, claims proved by a real run. A miss is a P2 or P3 finding naming the principle.
+${on('figma') ? '- If brief.md has a "Design reference (Figma)" section: open the Figma images and compare them with the after screenshots yourself. A visible difference the summary does not explain is a P2 finding.\n' : ''}${on('principles') ? '- If brief.md has an "Engineering principles" section, whether the diff follows them: the smallest change, a root-cause fix instead of a guard, tests that assert behavior, claims proved by a real run. A miss is a P2 or P3 finding naming the principle.' : ''}${stepInstructions(cfg, 'supervisor')}
 
 Write ${path.join(flowDir, 'SUPERVISE.json')} and nothing else:
 {

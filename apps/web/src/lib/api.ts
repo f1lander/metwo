@@ -1,4 +1,4 @@
-import type { LinearSyncRow, MascotStatus, SlackChannel, AskReply, Nudge, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, OpenPr, ReviewDepth, CiDiagnosis, FindScope, FoundIssue, LinearProject, EngineSetupStatus, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrinciplesUpdate, PrReview, HumanTestRun, PrView, Readiness, LiveLine, TestPlan, TestStep, ServerEvent, Settings, SettingsView, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
+import type { LinearSyncRow, MascotStatus, SlackChannel, AskReply, Nudge, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, OpenPr, ReviewDepth, CiDiagnosis, FindScope, FoundIssue, LinearProject, EngineSetupStatus, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrinciplesUpdate, PrReview, HumanTestRun, PrView, Readiness, LiveLine, TestPlan, TestStep, ServerEvent, Settings, SettingsView, PipelineView, PromptPreview, StepId, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
 import { useCallback, useEffect, useState } from 'react'
 import { setLabelColors } from './labels.js'
 import { setTriage } from './triage.js'
@@ -226,6 +226,8 @@ export const learningActions = {
   remove: (rule: string) => post('/api/learnings/remove', { rule }),
 }
 export const loadSettings = () => getJson<SettingsView>('/api/settings')
+export const loadPipeline = () => getJson<PipelineView>('/api/pipeline')
+export const loadPrompt = (id: string, step: StepId) => getJson<PromptPreview>(`/api/tickets/${id}/prompt/${step}`)
 export const loadToday = () => getJson<TodayItem[]>('/api/today')
 export const askMetwo = (question: string, history: { role: 'you' | 'mevo'; text: string }[]) => post<AskReply>('/api/ask', { question, history })
 export const runAssist = (actions: AssistAction[]) => post<{ results: { action: AssistAction; ok: boolean; text: string }[] }>('/api/assist/run', { actions })

@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { PlanFirst, Settings, NightShiftConfig, RollCall } from '@ticketflow/shared'
+import type { ContextBlock, PlanFirst, Settings, NightShiftConfig, RollCall, StepId, StepValues } from '@ticketflow/shared'
+import { fromStages } from './stages.js'
 
 // Claude's model per lane; how hard it thinks is the global effort (pipeline.effort, the app, /effort).
 interface ModelSpec {
@@ -105,6 +106,9 @@ export interface Config {
     // worktree by themselves when it is a fast-forward; anything else waits for Pull from GitHub
     readonly autoPullPr: boolean
   }
+  // per AI step: effort (null = pipeline.effort; quick defaults to low), extra instructions added to
+  // its prompt, and context blocks turned off ({ "figma": false }); see STEP_CONTEXT
+  readonly steps: { readonly [K in StepId]: StepValues }
   readonly classifier: {
     readonly neverAuto: readonly string[]
     readonly fullLaneLabels: readonly string[]
@@ -360,6 +364,13 @@ const DEFAULTS: Config = {
     autoUpdateFromMain: false,
     autoPullPr: true,
   },
+  steps: {
+    implement: { effort: null, instructions: '', context: {} },
+    review: { effort: null, instructions: '', context: {} },
+    supervisor: { effort: null, instructions: '', context: {} },
+    visual: { effort: null, instructions: '', context: {} },
+    quick: { effort: 'low', instructions: '', context: {} },
+  },
   classifier: {
     neverAuto: ['Security', 'High', 'Protocol', 'Needs Design'],
     fullLaneLabels: ['Bug', 'Security', 'High'],
@@ -448,7 +459,7 @@ function merge(base: Json, over: Json): Json {
 export function loadConfig(rootDir: string): Config {
   const file = path.join(rootDir, 'ticketflow.config.json')
   if (!existsSync(file)) throw new Error(`no ticketflow.config.json in ${rootDir}: copy ticketflow.config.example.json and set your paths`)
-  const cfg = merge(DEFAULTS as unknown as Json, JSON.parse(readFileSync(file, 'utf8')) as Json) as unknown as Config
+  const cfg = merge(DEFAULTS as unknown as Json, fromStages(JSON.parse(readFileSync(file, 'utf8')) as Json)) as unknown as Config
   const missing = [
     ['repo.path', cfg.repo.path],
     ['linear.teamKey', cfg.linear.teamKey],
@@ -460,6 +471,15 @@ export function loadConfig(rootDir: string): Config {
   return withE2e.pipeline.autoStart && !withE2e.autopilot.enabled ? { ...withE2e, autopilot: { ...withE2e.autopilot, enabled: true } } : withE2e
 }
 
+// whether ticketflow.config.json describes the pipeline with a stages block
+export function usesStages(rootDir: string): boolean {
+  try {
+    return 'stages' in (JSON.parse(readFileSync(path.join(rootDir, 'ticketflow.config.json'), 'utf8')) as Json)
+  } catch {
+    return false
+  }
+}
+
 function detectE2e(repo: string): E2eConfig | null {
   try {
     const pkg = JSON.parse(readFileSync(path.join(repo, 'package.json'), 'utf8')) as { scripts?: Record<string, string> }
@@ -467,6 +487,11 @@ function detectE2e(repo: string): E2eConfig | null {
   } catch {
     return null
   }
+}
+
+// a context block is on unless the step turns it off
+export function ctxOn(cfg: Config, step: StepId, block: ContextBlock): boolean {
+  return cfg.steps?.[step]?.context[block] !== false
 }
 
 export function knowledgeDir(): string {
@@ -477,6 +502,6 @@ export function knowledgeDir(): string {
 export function effective(cfg: Config, s: Settings | undefined): Config {
   if (!s) return cfg
   const { since: _since, ...autopilot } = s.autopilot ?? {}
-  const pipeline = { ...(s.effort ? { effort: s.effort } : {}), ...(s.maxParallel ? { maxParallel: s.maxParallel } : {}) }
-  return merge(cfg as unknown as Json, { engines: s.engines ?? {}, roles: s.roles ?? {}, autopilot, budget: s.budget ?? {}, triage: s.triage ?? {}, readiness: s.readiness ?? {}, localChecks: s.localChecks ?? {}, afterFix: s.afterFix ?? {}, chat: s.chat ?? {}, principles: s.principles ?? {}, slack: s.slack ?? {}, figma: s.figma ?? {}, mascot: s.mascot ?? {}, daemon: s.daemon ?? {}, quality: s.quality ?? {}, pipeline } as Json) as unknown as Config
+  const pipeline = { ...(s.pipeline ?? {}), ...(s.effort ? { effort: s.effort } : {}), ...(s.maxParallel ? { maxParallel: s.maxParallel } : {}) }
+  return merge(cfg as unknown as Json, { engines: s.engines ?? {}, roles: s.roles ?? {}, autopilot, budget: s.budget ?? {}, triage: s.triage ?? {}, readiness: s.readiness ?? {}, localChecks: s.localChecks ?? {}, afterFix: s.afterFix ?? {}, chat: s.chat ?? {}, principles: s.principles ?? {}, slack: s.slack ?? {}, figma: s.figma ?? {}, mascot: s.mascot ?? {}, daemon: s.daemon ?? {}, quality: s.quality ?? {}, github: s.github ?? {}, steps: s.steps ?? {}, pipeline } as Json) as unknown as Config
 }

@@ -71,7 +71,7 @@ export function App() {
         <AnimatePresence mode="wait" initial={false}>
           <motion.div key={state ? pageKey : 'offline'} {...PAGE} className="flex min-h-0 flex-1 flex-col">
             {route.page === 'settings' ? (
-              <SettingsPage health={health} refresh={refresh} tab={route.tab} />
+              <SettingsPage health={health} refresh={refresh} tab={route.tab} tickets={tickets} />
             ) : route.page === 'learnings' ? (
               <LearningsPage />
             ) : !state ? (

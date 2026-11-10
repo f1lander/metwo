@@ -17,15 +17,15 @@ export class MainSync {
   onUpdated: ((ticket: Ticket, outcome: string) => void) | null = null
 
   constructor(
-    private readonly cfg: Config,
+    private readonly config: () => Config,
     private readonly store: Store,
     private readonly runner: Runner,
   ) {}
 
   async tick(): Promise<void> {
-    const base = `origin/${this.cfg.repo.baseBranch}`
+    const base = `origin/${this.config().repo.baseBranch}`
     try {
-      await git(['fetch', 'origin', this.cfg.repo.baseBranch], this.cfg.repo.path)
+      await git(['fetch', 'origin', this.config().repo.baseBranch], this.config().repo.path)
       this.fetchedAt = Date.now()
     } catch (error) {
       this.onResult?.(false, `fetch failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -33,16 +33,16 @@ export class MainSync {
     }
     let behind = 0
     for (const t of this.store.byStatus(...OPEN)) if ((await this.check(t, base)) > 0) behind++
-    this.onResult?.(true, behind ? `${behind} branch(es) behind ${this.cfg.repo.baseBranch}` : `all branches up to date with ${this.cfg.repo.baseBranch}`)
+    this.onResult?.(true, behind ? `${behind} branch(es) behind ${this.config().repo.baseBranch}` : `all branches up to date with ${this.config().repo.baseBranch}`)
   }
 
   // One ticket right away, when GitHub reports its PR conflicting before the next tick.
   async checkOne(id: string): Promise<void> {
     const t = this.store.get(id)
     if (!t?.worktree || !OPEN.includes(t.status)) return
-    const base = `origin/${this.cfg.repo.baseBranch}`
+    const base = `origin/${this.config().repo.baseBranch}`
     if (Date.now() - this.fetchedAt > 60_000) {
-      await git(['fetch', 'origin', this.cfg.repo.baseBranch], this.cfg.repo.path).catch(() => undefined)
+      await git(['fetch', 'origin', this.config().repo.baseBranch], this.config().repo.path).catch(() => undefined)
       this.fetchedAt = Date.now()
     }
     await this.check(t, base)
@@ -64,7 +64,7 @@ export class MainSync {
       } else if (commits > 0 && (prev?.commits !== commits || prev.conflicts !== conflicts || (prev.files ?? []).join() !== files.join())) {
         this.store.patch(t.id, { behindMain: { commits, conflicts, at: new Date().toISOString(), ...(conflicts ? { files } : {}) } })
       }
-      if (this.cfg.pipeline.autoUpdateFromMain && commits > 0 && !conflicts && t.status === 'pr_draft' && t.pr?.state !== 'MERGED') {
+      if (this.config().pipeline.autoUpdateFromMain && commits > 0 && !conflicts && t.status === 'pr_draft' && t.pr?.state !== 'MERGED') {
         const outcome = await this.runner.updateFromMain(t.id)
         this.onUpdated?.(this.store.get(t.id) ?? t, outcome)
       }

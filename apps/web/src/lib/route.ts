@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 
-export type SettingsTab = 'general' | 'budget' | 'engines' | 'integrations' | 'status'
-const TABS: readonly SettingsTab[] = ['general', 'budget', 'engines', 'integrations', 'status']
+export type SettingsTab = 'pipeline' | 'engines' | 'integrations' | 'app' | 'status'
+const TABS: readonly SettingsTab[] = ['pipeline', 'engines', 'integrations', 'app', 'status']
+// links from before the Pipeline tab
+const OLD: Readonly<Record<string, SettingsTab>> = { general: 'pipeline', budget: 'engines' }
 
 export type Route = { readonly page: 'home' } | { readonly page: 'today' } | { readonly page: 'board' } | { readonly page: 'reviews' } | { readonly page: 'review'; readonly id: string } | { readonly page: 'ticket'; readonly id: string } | { readonly page: 'settings'; readonly tab: SettingsTab } | { readonly page: 'learnings' }
 
@@ -13,7 +15,7 @@ function parse(hash: string): Route {
   if (hash.startsWith('#/reviews')) return { page: 'reviews' }
   if (hash.startsWith('#/health')) return { page: 'settings', tab: 'status' }
   const settings = /^#\/settings(?:\/(\w+))?/.exec(hash)
-  if (settings) return { page: 'settings', tab: TABS.find((t) => t === settings[1]) ?? 'general' }
+  if (settings) return { page: 'settings', tab: TABS.find((t) => t === settings[1]) ?? OLD[settings[1] ?? ''] ?? 'pipeline' }
   if (hash.startsWith('#/learnings')) return { page: 'learnings' }
   if (hash.startsWith('#/board')) return { page: 'board' }
   if (hash.startsWith('#/today')) return { page: 'today' }
