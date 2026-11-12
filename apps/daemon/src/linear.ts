@@ -109,7 +109,7 @@ const COMMENTS = /* GraphQL */ `
   query IssueComments($id: String!) {
     issue(id: $id) {
       comments(first: 50) {
-        nodes { body createdAt user { displayName name } botActor { name } }
+        nodes { id body createdAt url parent { id } user { displayName name isMe } botActor { name } }
       }
     }
   }
@@ -194,10 +194,25 @@ const person = (u: LinearUserNode | null | undefined): LinearPerson | undefined 
   u ? { name: u.displayName ?? u.name ?? 'someone', avatar: u.avatarUrl ?? null, github: u.gitHubUserId ?? null } : undefined
 
 interface CommentNode {
+  id?: string
   body: string
   createdAt: string
-  user: LinearUserNode | null
+  url?: string
+  parent?: { id: string } | null
+  user: (LinearUserNode & { isMe?: boolean }) | null
   botActor: { name: string | null } | null
+}
+
+// a comment with what it takes to answer it in its thread
+export interface ThreadComment {
+  readonly id: string
+  readonly parent: string | null
+  readonly author: string
+  readonly body: string
+  readonly createdAt: string
+  readonly url: string
+  readonly mine: boolean
+  readonly bot: boolean
 }
 
 export class Linear {
@@ -295,6 +310,41 @@ export class Linear {
       .filter((c) => !c.botActor && !/\b(mevo|manix|metwo) agent\b/.test(c.body))
       .map((c) => ({ author: c.user?.displayName ?? c.user?.name ?? 'someone', body: c.body, createdAt: c.createdAt }))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+
+  // every comment with its id and thread, oldest first (the newest 50)
+  async threadComments(issueUuid: string): Promise<readonly ThreadComment[]> {
+    const data = await this.client.client.request<{ issue: { comments: { nodes: CommentNode[] } } }, Record<string, unknown>>(COMMENTS, { id: issueUuid })
+    return data.issue.comments.nodes
+      .map((c) => ({
+        id: c.id ?? '',
+        parent: c.parent?.id ?? null,
+        author: c.botActor?.name ?? c.user?.displayName ?? c.user?.name ?? 'someone',
+        body: c.body,
+        createdAt: c.createdAt,
+        url: c.url ?? '',
+        mine: Boolean(c.user?.isMe),
+        bot: Boolean(c.botActor) || /\b(mevo|manix|metwo) agent\b|mevo, \w+'s assistant/.test(c.body),
+      }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+
+  // an answer under a comment, in its thread
+  async reply(issueUuid: string, parentId: string, body: string): Promise<string | null> {
+    const result = await this.client.createComment({ issueId: issueUuid, body, parentId })
+    const comment = await result.comment
+    return comment?.url ?? null
+  }
+
+  // a new issue in your team, from a request that is out of the ticket's scope
+  async createIssue(title: string, description: string): Promise<{ id: string; url: string }> {
+    const teams = await this.client.teams({ filter: { key: { eq: this.cfg.teamKey } } })
+    const team = teams.nodes[0]
+    if (!team) throw new Error(`Linear team ${this.cfg.teamKey} not found`)
+    const result = await this.client.createIssue({ teamId: team.id, title, description })
+    const issue = await result.issue
+    if (!issue) throw new Error('Linear did not create the issue')
+    return { id: issue.identifier, url: issue.url }
   }
 
   async issueView(issueUuid: string): Promise<LinearIssueView> {

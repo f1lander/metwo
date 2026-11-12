@@ -1603,6 +1603,9 @@ Reply with only this JSON: {"answer":"markdown","toLane":null}`
         await this.tellReviewers(id, true).catch((e: unknown) => log.warn(`${id}: telling reviewers failed`, e))
       }
     }
+    const pushed = await git(['rev-parse', 'HEAD'], wt).catch(() => '')
+    const after = this.store.get(id)
+    if (pushed && after) this.onPushed?.(after, pushed)
     // every push gets a fresh review: Greptile does not re-run on a draft by itself
     if (greptile.enabled) {
       try {
@@ -1705,6 +1708,8 @@ Reply with only this JSON: {"answer":"markdown","toLane":null}`
   // clients; the tokens never reach the lane). Best effort: a failure is a journal note, not a stop.
   // a PR marked ready for review (Slack announces it when that is on)
   onReady: ((t: Ticket) => void) | null = null
+  // after every push: the requests in the lane get their "Addressed in" draft
+  onPushed: ((t: Ticket, head: string) => void) | null = null
 
   extras: {
     figma?: (texts: readonly string[], dir: string) => Promise<{ frames: readonly FigmaFrame[]; skipped: readonly string[] } | null>

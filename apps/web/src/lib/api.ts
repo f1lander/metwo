@@ -1,4 +1,4 @@
-import type { LinearSyncRow, MascotStatus, SlackChannel, AskReply, Nudge, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, OpenPr, ReviewDepth, CiDiagnosis, FindScope, FoundIssue, LinearProject, EngineSetupStatus, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrinciplesUpdate, PrReview, HumanTestRun, PrView, Readiness, LiveLine, TestPlan, TestStep, ServerEvent, Settings, SettingsView, PipelineView, PromptPreview, ReplayView, StepId, VisualPlanView, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
+import type { ChangeRequest, LinearSyncRow, MascotStatus, SlackChannel, AskReply, Nudge, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, OpenPr, ReviewDepth, CiDiagnosis, FindScope, FoundIssue, LinearProject, EngineSetupStatus, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrinciplesUpdate, PrReview, HumanTestRun, PrView, Readiness, LiveLine, TestPlan, TestStep, ServerEvent, Settings, SettingsView, PipelineView, PromptPreview, ReplayView, StepId, VisualPlanView, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
 import { useCallback, useEffect, useState } from 'react'
 import { setLabelColors } from './labels.js'
 import { setTriage } from './triage.js'
@@ -77,6 +77,7 @@ export function useDaemon(): DaemonFeed {
         if (event.type === 'labels') setLabelColors(event.labelColors)
         if (event.type === 'triage') setTriage(event.triage)
         if (event.type === 'slack') setState((prev) => (prev ? { ...prev, slackMentions: event.mentions } : prev))
+        if (event.type === 'requests') setState((prev) => (prev ? { ...prev, requests: event.requests } : prev))
         if (event.type === 'night') setState((prev) => (prev ? { ...prev, nightShift: event.night } : prev))
         if (event.type === 'mascot') setState((prev) => (prev ? { ...prev, mascot: event.mascot } : prev))
         if (event.type === 'ticket') {
@@ -273,6 +274,15 @@ async function post<T = unknown>(path: string, body?: unknown): Promise<T> {
 }
 
 export const actions = {
+  requestEdit: (id: string, patch: { instruction?: string; reply?: string }) => post<{ request: ChangeRequest }>(`/api/requests/${id}`, patch),
+  requestSend: (id: string, quick = false) => post<{ request: ChangeRequest }>(`/api/requests/${id}/send`, { quick }),
+  requestSendAll: (ticketId: string, quick = false) => post<{ requests: ChangeRequest[] }>(`/api/tickets/${ticketId}/requests/send`, { quick }),
+  requestReply: (id: string, text: string) => post<{ request: ChangeRequest }>(`/api/requests/${id}/reply`, { text }),
+  requestDecline: (id: string, text: string) => post<{ request: ChangeRequest }>(`/api/requests/${id}/decline`, { text }),
+  requestClose: (id: string) => post<{ request: ChangeRequest }>(`/api/requests/${id}/close`),
+  requestTicket: (id: string) => post<{ request: ChangeRequest; issue: { id: string; url: string } }>(`/api/requests/${id}/ticket`),
+  requestAddressed: (id: string, text?: string) => post<{ request: ChangeRequest }>(`/api/requests/${id}/addressed`, text ? { text } : {}),
+  requestScan: () => post<{ requests: ChangeRequest[] }>('/api/requests/scan'),
   start: (t: Ticket, lane: StartChoice, engine?: string) => post(`/api/tickets/${t.id}/start`, { lane, ...(engine ? { engine } : {}) }),
   skip: (t: Ticket) => post(`/api/tickets/${t.id}/skip`),
   done: (t: Ticket) => post(`/api/tickets/${t.id}/done`),

@@ -79,7 +79,7 @@ export function App() {
             ) : !state ? (
               <Offline connected={connected} unauthorized={unauthorized} />
             ) : route.page === 'today' ? (
-              <TodayPage tickets={tickets} reviews={reviews} mentions={state.slackMentions ?? []} {...(state.nightShift ? { night: state.nightShift } : {})} slack={health?.slack?.ok === true} />
+              <TodayPage tickets={tickets} reviews={reviews} mentions={state.slackMentions ?? []} {...(state.nightShift ? { night: state.nightShift } : {})} slack={health?.slack?.ok === true} requests={state.requests ?? []} />
             ) : route.page === 'home' ? (
               <Home tickets={tickets} health={health} reviews={reviews} />
             ) : route.page === 'reviews' ? (
@@ -113,6 +113,7 @@ export function App() {
                   tickets={tickets}
                   live={live}
                   me={health?.github.login ?? null}
+                  requests={state?.requests ?? []}
                 />
                 <Activity tickets={tickets} />
               </>

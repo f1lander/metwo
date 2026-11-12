@@ -685,6 +685,9 @@ function NightShiftRows({ value, changed, reset, save }: { value: Partial<NightS
           <Row label="Answer DMs from my account" hint="A DM is answered in that same conversation, from your account, always starting with “This is mevo, your assistant, writing from your account: you are on Night Shift”. In Post factual answers mode it answers questions about your work and, once per person, says the rest waits for you. Off: the bot answers them in their own DM with the bot.">
             <Toggle label="answer DMs from my account" on={ns.dmAsMe} onChange={(v) => save({ dmAsMe: v })} />
           </Row>
+          <Row label="Linear comments" hint="Comments on your Linear tickets while you are away, read like a Slack message. Drafts: the answers wait in the morning handoff. Post: facts and a one-time “noted” go out by themselves, in the comment's thread, from your account, always starting with “🤖 mevo, your assistant”. An ask for a change also lands in Requests on the board.">
+            <Select label="night shift in linear" value={ns.linear ?? 'draft'} options={[{ value: 'off', label: 'Off' }, { value: 'draft', label: 'Drafts only' }, { value: 'post', label: 'Post by itself' }]} onChange={(v) => save({ linear: v as NonNullable<NightShiftConfig['linear']> })} />
+          </Row>
           <Row label="Wake me for" hint="Messages with these words or names are urgent and reach you on Telegram right away, whatever the model thinks. Comma separated.">
             <TextField label="wake words" value={ns.wake.join(', ')} placeholder="prod, down, dom" onSave={(v) => save({ wake: v.split(',').map((w) => w.trim()).filter(Boolean).slice(0, 20) })} />
           </Row>

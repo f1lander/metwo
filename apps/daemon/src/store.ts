@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { History } from './history.js'
-import type { DaemonState, JournalEntry, PrReview, Settings, Ticket, TicketEvent, Triage, SlackMention, NightShiftState, MascotStatus } from '@ticketflow/shared'
+import type { ChangeRequest, DaemonState, JournalEntry, PrReview, Settings, Ticket, TicketEvent, Triage, SlackMention, NightShiftState, MascotStatus } from '@ticketflow/shared'
 
 // JSON file state. Good enough for one dev and a few dozen tickets; swap for sqlite later.
 export class Store extends EventEmitter {
@@ -167,6 +167,43 @@ export class Store extends EventEmitter {
     this.persist()
     this.emit('slack', list)
     return m
+  }
+
+  requests(): readonly ChangeRequest[] {
+    return this.state.requests ?? []
+  }
+
+  // newest first; closed ones older than a week drop off
+  putRequest(r: ChangeRequest): ChangeRequest {
+    const week = new Date(Date.now() - 7 * 86_400_000).toISOString()
+    const rest = (this.state.requests ?? []).filter((x) => x.id !== r.id && (x.status === 'new' || x.status === 'sent' || x.status === 'addressed' || x.updatedAt > week))
+    const list = [r, ...rest].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 300)
+    this.state = { ...this.state, requests: list }
+    this.persist()
+    this.emit('requests', list)
+    return r
+  }
+
+  patchRequest(id: string, patch: Partial<ChangeRequest>): ChangeRequest {
+    const r = this.requests().find((x) => x.id === id)
+    if (!r) throw new Error(`no request ${id}`)
+    return this.putRequest({ ...r, ...patch, updatedAt: new Date().toISOString() })
+  }
+
+  requestSeen(): ReadonlySet<string> {
+    return new Set(this.state.requestSeen ?? [])
+  }
+
+  markRequestSeen(keys: readonly string[], baseline?: string): void {
+    if (!keys.length && !baseline) return
+    const seen = [...(this.state.requestSeen ?? []), ...keys].slice(-4000)
+    const base = baseline ? [...new Set([...(this.state.requestBaseline ?? []), baseline])].slice(-1000) : this.state.requestBaseline
+    this.state = { ...this.state, requestSeen: seen, ...(base ? { requestBaseline: base } : {}) }
+    this.persist()
+  }
+
+  baselined(ticketId: string): boolean {
+    return (this.state.requestBaseline ?? []).includes(ticketId)
   }
 
   mascot(): MascotStatus {

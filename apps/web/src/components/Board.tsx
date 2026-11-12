@@ -1,4 +1,4 @@
-import { fmtMinutes, type LiveLine, openComments, prChecks, type Ticket, usd } from '@ticketflow/shared'
+import { type ChangeRequest, fmtMinutes, type LiveLine, openComments, openRequests, prChecks, type Ticket, usd } from '@ticketflow/shared'
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { actions, type LiveMap } from '../lib/api.js'
@@ -16,6 +16,7 @@ import { openCycle } from './Cycle.js'
 import { NudgeAll } from './Nudge.js'
 import { ReadyButton, SizeChip } from './Ready.js'
 import { failed, notice } from '../lib/notice.js'
+import { RequestCounts, requestCounts, RequestsColumn, useRequestCount } from './Requests.js'
 
 const CARD_SPRING = { type: 'spring', stiffness: 340, damping: 32, mass: 0.8 } as const
 
@@ -205,7 +206,7 @@ function Chip({ on, onClick, hidden = false, children }: { on: boolean; onClick:
   )
 }
 
-export function Board({ tickets: all, live, me }: { tickets: readonly Ticket[]; live: LiveMap; me?: string | null }) {
+export function Board({ tickets: all, live, me, requests = [] }: { tickets: readonly Ticket[]; live: LiveMap; me?: string | null; requests?: readonly ChangeRequest[] }) {
   const [filter, setFilter] = useState<Filter>(readFilter)
   const set = (f: Filter) => {
     setFilter(f)
@@ -224,7 +225,9 @@ export function Board({ tickets: all, live, me }: { tickets: readonly Ticket[]; 
   useEffect(() => {
     const el = scroller.current
     if (!el || el.scrollWidth <= el.clientWidth + 4 || !window.matchMedia('(max-width: 767px)').matches) return
-    const first = [2, 3, 1, 0].find((i) => (columns[i]?.items.length ?? 0) > 0) ?? 0
+    const found = [2, 3, 1, 0].find((i) => (columns[i]?.items.length ?? 0) > 0) ?? 0
+    // the Requests column sits after Assigned; it comes first when something waits there
+    const first = openRequests(requests).length ? 1 : found === 0 ? 0 : found + 1
     el.scrollTo({ left: first * el.clientWidth * 0.88, behavior: 'instant' as ScrollBehavior })
     setActive(first)
     // only on mount
@@ -246,6 +249,7 @@ export function Board({ tickets: all, live, me }: { tickets: readonly Ticket[]; 
   }
 
   return (
+    <RequestCounts.Provider value={requestCounts(requests)}>
     <LayoutGroup>
       <div className="flex min-h-0 flex-1 flex-col">
         <FilterBar tickets={all.filter((t) => t.status !== 'done' && t.status !== 'skipped')} filter={filter} set={set} shown={tickets.length} />
@@ -255,7 +259,15 @@ export function Board({ tickets: all, live, me }: { tickets: readonly Ticket[]; 
         <>
         {/* phone: column tabs */}
         <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-line px-3 py-2 md:hidden" aria-label="columns">
-          {columns.map((col, i) => (
+          {[columns[0]!, null, ...columns.slice(1)].map((col, i) =>
+            col === null ? (
+              <button key="requests" type="button" onClick={() => jump(i)} className={`relative flex min-h-9 shrink-0 items-center gap-1.5 rounded-md px-3 text-xs ${active === i ? 'text-fg' : 'text-muted'}`}>
+                {active === i && <motion.span layoutId="col-tab" className="absolute inset-0 rounded-md bg-raised" transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
+                <span className="relative size-2 rounded-full bg-[#e0a458]" aria-hidden="true" />
+                <span className="relative">Requests</span>
+                <Count value={openRequests(requests).length} className="relative text-dim" />
+              </button>
+            ) : (
             <button
               key={col.title}
               type="button"
@@ -267,7 +279,8 @@ export function Board({ tickets: all, live, me }: { tickets: readonly Ticket[]; 
               <span className="relative">{col.title}</span>
               <Count value={col.items.length} className="relative text-dim" />
             </button>
-          ))}
+            ),
+          )}
         </nav>
 
         <motion.div
@@ -276,7 +289,10 @@ export function Board({ tickets: all, live, me }: { tickets: readonly Ticket[]; 
           onScroll={onScroll}
           className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto overflow-y-hidden scroll-px-4 px-4 md:grid md:auto-cols-[minmax(250px,1fr)] md:grid-flow-col md:snap-none"
         >
-          {columns.map((col) => (
+          {[columns[0]!, null, ...columns.slice(1)].map((col) =>
+            col === null ? (
+              <RequestsColumn key="requests" requests={requests} tickets={all} />
+            ) : (
             <section key={col.title} className="flex min-h-0 w-[88vw] max-w-[420px] shrink-0 snap-start flex-col md:w-auto md:max-w-none md:min-w-0">
               <h2 className={`flex shrink-0 items-center gap-2 whitespace-nowrap pt-4 pb-2 text-xs font-medium max-md:hidden ${col.title === 'Needs me' && col.items.length ? 'text-fg' : 'text-muted'}`}>
                 <span className="relative flex size-2">
@@ -307,12 +323,14 @@ export function Board({ tickets: all, live, me }: { tickets: readonly Ticket[]; 
                 )}
               </motion.div>
             </section>
-          ))}
+            ),
+          )}
         </motion.div>
         </>
         )}
       </div>
     </LayoutGroup>
+    </RequestCounts.Provider>
   )
 }
 
@@ -449,6 +467,7 @@ const TicketCard = memo(function TicketCard({ ticket: t, last }: { ticket: Ticke
   const p = priorityLabel(t.priority)
   const priority = p && !t.labels.includes(p) ? p : null
   const manual = summarySection(t.summary, /needs manual test/i)
+  const asked = useRequestCount(t.id)
 
   return (
     <motion.article
@@ -484,7 +503,10 @@ const TicketCard = memo(function TicketCard({ ticket: t, last }: { ticket: Ticke
 
       <motion.div layout="position" layoutDependency={t.status} className="flex flex-col gap-2">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-muted">{t.id}</span>
+          <span className="text-muted">
+            {t.id}
+            {asked > 0 && <span className="ml-1.5 rounded-full border border-[#4a3b22] px-1.5 text-[#e0a458]" title="asks for changes waiting in Requests">{asked} request{asked === 1 ? '' : 's'}</span>}
+          </span>
           {t.status === 'assigned' && (
             <Person name={t.createdBy.split('@')[0] ?? t.createdBy} src={linearAvatar(t.creator)} size={16} className="text-dim" />
           )}

@@ -1126,6 +1126,9 @@ export interface SlackMention {
   readonly fromBot?: boolean
   // the Slack user who wrote it, when a person did
   readonly fromId?: string
+  // a Linear comment on one of your tickets, read by Night Shift like a Slack message
+  readonly source?: 'slack' | 'linear'
+  readonly linear?: { readonly issue: string; readonly comment: string; readonly parent: string | null; readonly ticket: string }
 }
 
 // A Slack channel you could post to; bot: the bot is in it (it can only post where it was invited)
@@ -1168,6 +1171,9 @@ export interface NightShiftConfig {
   readonly wake: readonly string[]
   // a DM gets its answer in that same DM, from your account, labelled as mevo writing for you
   readonly dmAsMe: boolean
+  // comments on your Linear tickets: off, draft (replies wait for you), post (facts and "noted"
+  // go out by themselves, in the comment's thread, from your account with mevo's label)
+  readonly linear?: 'off' | 'draft' | 'post'
 }
 
 export interface Handoff {
@@ -1241,6 +1247,12 @@ export interface DaemonState {
   // Linear label name → its color in Linear ("#bec2c8")
   readonly labelColors?: Readonly<Record<string, string>>
   readonly slackMentions?: readonly SlackMention[]
+  // asks for changes on your tickets, waiting for you (requests.ts)
+  readonly requests?: readonly ChangeRequest[]
+  // message keys already read for requests (linear:<id>, github:<id>, slack:<id>), and the tickets whose
+  // older Linear comments were skipped the first time
+  readonly requestSeen?: readonly string[]
+  readonly requestBaseline?: readonly string[]
   readonly nightShift?: NightShiftState
   readonly mascot?: MascotStatus
 }
@@ -1256,6 +1268,7 @@ export type ServerEvent =
   | { readonly type: 'triage'; readonly triage: Readonly<Record<string, Triage>> }
   | { readonly type: 'labels'; readonly labelColors: Readonly<Record<string, string>> }
   | { readonly type: 'slack'; readonly mentions: readonly SlackMention[] }
+  | { readonly type: 'requests'; readonly requests: readonly ChangeRequest[] }
   | { readonly type: 'night'; readonly night: NightShiftState }
   | { readonly type: 'mascot'; readonly mascot: MascotStatus }
   | { readonly type: 'snapshot'; readonly state: DaemonState }
@@ -1418,3 +1431,49 @@ export interface Leaderboard {
   readonly at: string
   readonly errors: readonly string[]
 }
+
+// A message that asks for a change on one of your tickets: from a Linear comment, a PR comment or
+// a Slack thread. mevo reads it and drafts the lane's instruction; nothing runs until you send it.
+export interface RequestSource {
+  readonly kind: 'linear' | 'github' | 'slack'
+  readonly url: string
+  readonly author: string
+  readonly at: string
+  readonly quote: string
+  // where to answer: linear "<issue uuid>:<comment id>:<thread root id>", github the PR comment id,
+  // slack "<channel>:<thread ts>"
+  readonly ref: string
+}
+
+export type RequestRead = 'makes_sense' | 'check' | 'out_of_scope'
+
+export interface ChangeRequest {
+  readonly id: string
+  readonly ticketId: string
+  // a change someone wants, or a bug QA found
+  readonly kind: 'change' | 'bug'
+  readonly ask: string
+  readonly read: RequestRead
+  readonly why: string
+  // what the lane is told, editable before you send it
+  readonly instruction: string
+  readonly size: 'quick' | 'lane'
+  // a short answer for the thread
+  readonly reply: string
+  readonly sources: readonly RequestSource[]
+  readonly images?: readonly string[]
+  // new: waiting for you · sent: in the lane · addressed: pushed, the reply waits for you ·
+  // done: answered or closed · declined
+  readonly status: 'new' | 'sent' | 'addressed' | 'done' | 'declined'
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly sent?: { readonly at: string; readonly quick: boolean; readonly head: string }
+  // after the push: "Addressed in <sha>" for each source, posted when you say so
+  readonly addressed?: { readonly sha: string; readonly draft: string; readonly posted?: { readonly at: string; readonly urls: readonly string[] } }
+  readonly answered?: { readonly at: string; readonly text: string }
+  readonly error?: string
+}
+
+// the requests still waiting on you for a ticket
+export const openRequests = (rs: readonly ChangeRequest[] | undefined, ticketId?: string): readonly ChangeRequest[] =>
+  (rs ?? []).filter((r) => (r.status === 'new' || r.status === 'addressed') && (!ticketId || r.ticketId === ticketId))

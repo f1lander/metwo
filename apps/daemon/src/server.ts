@@ -8,7 +8,7 @@ import { canFinishChecks } from '@ticketflow/shared'
 import type { EngineSetup } from './engine-setup.js'
 import type { Sessions } from './sessions.js'
 import { STEP_CONTEXT, type StepId } from '@ticketflow/shared'
-import type { AskReply, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, CycleView, FindScope, FoundIssue, LinearProject, Health, LearningProposal, LinearIssueView, PrinciplesUpdate, PrReview, HumanTestMode, HumanTestRun, PrView, Readiness, ServerEvent, TestPlan, Settings, SettingsView, PipelineView, StartChoice, Ticket, TicketDiff, TodayItem, Triage, NightShiftState, LinearSyncRow, MascotStatus, SlackChannel } from '@ticketflow/shared'
+import type { ChangeRequest, AskReply, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, CycleView, FindScope, FoundIssue, LinearProject, Health, LearningProposal, LinearIssueView, PrinciplesUpdate, PrReview, HumanTestMode, HumanTestRun, PrView, Readiness, ServerEvent, TestPlan, Settings, SettingsView, PipelineView, StartChoice, Ticket, TicketDiff, TodayItem, Triage, NightShiftState, LinearSyncRow, MascotStatus, SlackChannel } from '@ticketflow/shared'
 import { githubAvatar } from './avatars.js'
 import { knowledgeDir } from './config.js'
 import { Hono, type MiddlewareHandler } from 'hono'
@@ -111,6 +111,19 @@ export interface Controls {
   readonly askInLinear: (id: string, text: string) => Promise<string | null>
   readonly mascot: { readonly sip: (sips: number) => MascotStatus; readonly set: (energy: number) => MascotStatus }
   readonly linearSync: { readonly check: () => Promise<LinearSyncRow[]>; readonly fix: (ids?: readonly string[]) => Promise<LinearSyncRow[]> }
+  // asks for changes on your tickets (requests.ts)
+  readonly requests: {
+    readonly list: () => readonly ChangeRequest[]
+    readonly scan: () => Promise<void>
+    readonly edit: (id: string, patch: { instruction?: string; reply?: string }) => ChangeRequest
+    readonly send: (id: string, quick: boolean) => Promise<ChangeRequest>
+    readonly sendAll: (ticketId: string, quick: boolean) => Promise<readonly ChangeRequest[]>
+    readonly reply: (id: string, text: string) => Promise<ChangeRequest>
+    readonly decline: (id: string, text: string) => Promise<ChangeRequest>
+    readonly close: (id: string) => ChangeRequest
+    readonly newTicket: (id: string) => Promise<{ request: ChangeRequest; issue: { id: string; url: string } }>
+    readonly postAddressed: (id: string, text?: string) => Promise<ChangeRequest>
+  }
   readonly slack: {
     readonly mentions: () => readonly SlackMention[]
     readonly summarize: (id: string) => Promise<SlackMention>
@@ -291,7 +304,50 @@ export function startServer(port: number, host: string, rootDir: string, store: 
     return c.json(controls.health())
   })
 
-  app.get('/api/state', (c) => c.json(store.snapshot()))
+  // the state without the bookkeeping the app doesn't use
+  const publicState = () => {
+    const { requestSeen: _seen, requestBaseline: _base, ...rest } = store.snapshot()
+    return rest
+  }
+  app.get('/api/state', (c) => c.json(publicState()))
+
+  app.get('/api/requests', (c) => c.json(controls.requests.list()))
+  app.post('/api/requests/scan', async (c) => {
+    await controls.requests.scan()
+    return c.json({ ok: true, requests: controls.requests.list() })
+  })
+  app.post('/api/requests/:rid', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { instruction?: unknown; reply?: unknown }
+    const patch = { ...(typeof body.instruction === 'string' ? { instruction: body.instruction } : {}), ...(typeof body.reply === 'string' ? { reply: body.reply } : {}) }
+    return c.json({ ok: true, request: controls.requests.edit(c.req.param('rid'), patch) })
+  })
+  app.post('/api/requests/:rid/:action', async (c) => {
+    const id = c.req.param('rid')
+    const body = (await c.req.json().catch(() => ({}))) as { text?: unknown; quick?: unknown }
+    const text = typeof body.text === 'string' ? body.text.trim().slice(0, 4000) : ''
+    const quick = body.quick === true
+    switch (c.req.param('action')) {
+      case 'send':
+        return c.json({ ok: true, request: await controls.requests.send(id, quick) })
+      case 'reply':
+        if (!text) return c.json({ ok: false, error: 'empty reply' }, 400)
+        return c.json({ ok: true, request: await controls.requests.reply(id, text) })
+      case 'decline':
+        return c.json({ ok: true, request: await controls.requests.decline(id, text) })
+      case 'close':
+        return c.json({ ok: true, request: controls.requests.close(id) })
+      case 'ticket':
+        return c.json({ ok: true, ...(await controls.requests.newTicket(id)) })
+      case 'addressed':
+        return c.json({ ok: true, request: await controls.requests.postAddressed(id, text || undefined) })
+      default:
+        return c.json({ ok: false, error: 'unknown action' }, 404)
+    }
+  })
+  app.post('/api/tickets/:id/requests/send', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { quick?: unknown }
+    return c.json({ ok: true, requests: await controls.requests.sendAll(c.req.param('id'), body.quick === true) })
+  })
   app.get('/api/live', (c) => c.json(live.since(c.req.query('since') ?? '')))
   app.get('/api/tickets/:id/live', (c) => c.json(live.recent(c.req.param('id'))))
 
@@ -687,7 +743,7 @@ export function startServer(port: number, host: string, rootDir: string, store: 
     if (ms !== undefined && (typeof ms !== 'object' || (ms.enabled !== undefined && typeof ms.enabled !== 'boolean') || (ms.coffee !== undefined && typeof ms.coffee !== 'boolean'))) return c.json({ ok: false, error: 'mascot: { enabled?: boolean, coffee?: boolean }' }, 400)
     const ns = patch.slack?.nightShift
     const time = (v: unknown) => v === undefined || /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v))
-    if (ns !== undefined && (typeof ns !== 'object' || !time(ns.from) || !time(ns.to) || (ns.mode !== undefined && ns.mode !== 'shadow' && ns.mode !== 'facts') || (ns.days !== undefined && ns.days !== 'weekdays' && ns.days !== 'daily') || (ns.wake !== undefined && (!Array.isArray(ns.wake) || ns.wake.length > 20 || ns.wake.some((w) => typeof w !== 'string' || w.length > 40))) || (ns.dmAsMe !== undefined && typeof ns.dmAsMe !== 'boolean')))
+    if (ns !== undefined && (typeof ns !== 'object' || !time(ns.from) || !time(ns.to) || (ns.mode !== undefined && ns.mode !== 'shadow' && ns.mode !== 'facts') || (ns.days !== undefined && ns.days !== 'weekdays' && ns.days !== 'daily') || (ns.wake !== undefined && (!Array.isArray(ns.wake) || ns.wake.length > 20 || ns.wake.some((w) => typeof w !== 'string' || w.length > 40))) || (ns.dmAsMe !== undefined && typeof ns.dmAsMe !== 'boolean') || (ns.linear !== undefined && ns.linear !== 'off' && ns.linear !== 'draft' && ns.linear !== 'post')))
       return c.json({ ok: false, error: 'slack.nightShift: { enabled, mode: shadow|facts, from/to: "HH:MM", days, followSlack, wake: [words] }' }, 400)
     if (patch.autopilot?.enabled && !store.snapshot().settings?.autopilot?.enabled) store.setSettings({ autopilot: { since: new Date().toISOString() } })
     store.setSettings(patch)
@@ -955,7 +1011,7 @@ export function startServer(port: number, host: string, rootDir: string, store: 
   app.get('/api/events', (c) =>
     streamSSE(c, async (stream) => {
       const push = (event: ServerEvent) => stream.writeSSE({ data: JSON.stringify(event) })
-      await push({ type: 'snapshot', state: store.snapshot() })
+      await push({ type: 'snapshot', state: publicState() })
       // so cards show the lane's latest step right away, not only after the next line arrives
       for (const id of [...Object.keys(store.snapshot().tickets), ...Object.keys(store.snapshot().reviews ?? {})]) {
         for (const line of live.recent(id, 1)) await push({ type: 'live', id, line })
@@ -978,11 +1034,13 @@ export function startServer(port: number, host: string, rootDir: string, store: 
       const onLabels = (labelColors: Record<string, string>) => void push({ type: 'labels', labelColors })
       const onTriage = (triage: Record<string, Triage>) => void push({ type: 'triage', triage })
       const onSlack = (mentions: SlackMention[]) => void push({ type: 'slack', mentions })
+      const onRequests = (requests: ChangeRequest[]) => void push({ type: 'requests', requests })
       const onNight = (night: NightShiftState) => void push({ type: 'night', night })
       const onMascot = (mascot: MascotStatus) => void push({ type: 'mascot', mascot })
       store.on('night', onNight)
       store.on('mascot', onMascot)
       store.on('slack', onSlack)
+      store.on('requests', onRequests)
       store.on('labels', onLabels)
       store.on('triage', onTriage)
       store.on('ticket', onTicket)
@@ -993,6 +1051,7 @@ export function startServer(port: number, host: string, rootDir: string, store: 
         store.off('night', onNight)
         store.off('mascot', onMascot)
         store.off('slack', onSlack)
+        store.off('requests', onRequests)
         store.off('labels', onLabels)
         store.off('triage', onTriage)
         store.off('ticket', onTicket)

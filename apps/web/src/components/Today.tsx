@@ -2,7 +2,7 @@ import { ChangesRequested, ReviewSummary } from './FollowUp.js'
 import { LinearSyncCard } from './LinearSync.js'
 import { NightShiftCard, handoffIds } from './NightShift.js'
 import { NudgesToday } from './Nudge.js'
-import { type AskReply, type AssistAction, openComments, type PrReview, type Ticket, type TodayItem, type SlackMention, type NightShiftState } from '@ticketflow/shared'
+import { type ChangeRequest, openRequests, type AskReply, type AssistAction, openComments, type PrReview, type Ticket, type TodayItem, type SlackMention, type NightShiftState } from '@ticketflow/shared'
 import { AnimatePresence, motion } from 'motion/react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { askMetwo, loadToday, runAssist, triageNow } from '../lib/api.js'
@@ -37,7 +37,7 @@ interface Turn {
 
 // Today's brief from rules (no AI): what needs you, PRs to review, what to pick from the cycle,
 // each with its button. Asking in plain words is below and is the only part that uses AI.
-export function TodayPage({ tickets, reviews, mentions = [], night, slack = false }: { tickets: readonly Ticket[]; reviews: readonly PrReview[]; mentions?: readonly SlackMention[]; night?: NightShiftState; slack?: boolean }) {
+export function TodayPage({ tickets, reviews, mentions = [], night, slack = false, requests = [] }: { tickets: readonly Ticket[]; reviews: readonly PrReview[]; mentions?: readonly SlackMention[]; night?: NightShiftState; slack?: boolean; requests?: readonly ChangeRequest[] }) {
   const [items, setItems] = useState<TodayItem[] | null>(null)
   const [turns, setTurns] = useState<Turn[]>([])
   const [q, setQ] = useState('')
@@ -115,6 +115,16 @@ export function TodayPage({ tickets, reviews, mentions = [], night, slack = fals
         </header>
 
         <NightShiftCard night={night} mentions={mentions} slack={slack} />
+        {openRequests(requests).length > 0 && (
+          <a href={href.board} className="flex items-center gap-2 rounded-lg border border-[#4a3b22] bg-[#1a1712] px-4 py-3 text-sm hover:border-[#e0a458]">
+            <span className="size-2 rounded-full bg-[#e0a458]" aria-hidden="true" />
+            <span className="text-fg">
+              {openRequests(requests).length} request{openRequests(requests).length === 1 ? '' : 's'} for changes
+            </span>
+            <span className="text-muted">on {[...new Set(openRequests(requests).map((r) => r.ticketId))].join(', ')}: mevo read them, you decide</span>
+            <span className="ml-auto text-accent-fg">Open Requests</span>
+          </a>
+        )}
         <SlackMentions mentions={mentions.filter((m) => !handoffIds(night).has(m.id))} />
 
         <ChangesRequested tickets={tickets} />

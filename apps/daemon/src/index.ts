@@ -42,6 +42,8 @@ import { feedbackSection, FixLog, learnFromPr, lensSection, reviewedPrs } from '
 import { prMeta } from './runner/github.js'
 import { checkPrinciplesUpdate, principlesStatus, syncPrinciples } from './principles.js'
 import { Assistant } from './assistant.js'
+import { Requests } from './requests.js'
+import { ghLogin } from './runner/github.js'
 import { label as readinessLabel, ReadinessCheck } from './readiness.js'
 import { AndroidDevices } from './runner/android.js'
 import { HumanTests } from './runner/human-test.js'
@@ -271,7 +273,39 @@ const slack = new Slack({
   telegram: (text) => telegram.sendPlain(text),
 })
 const nudger = new Nudger(() => runner.config, store, slack)
-const nightShift = new NightShift({ cfg: () => runner.config, store, slack, telegram: (text) => telegram.sendPlain(text), json: (prompt, name) => assistant.sealed(prompt, name) })
+const nightShift = new NightShift({
+  cfg: () => runner.config,
+  store,
+  slack,
+  telegram: (text) => telegram.sendPlain(text),
+  json: (prompt, name) => assistant.sealed(prompt, name),
+  // Linear comments on your tickets: the thread they are in, and an answer under them
+  linear: {
+    thread: async (m) => {
+      if (!m.linear) return m.text
+      const root = m.linear.parent ?? m.linear.comment
+      const all = await linear.threadComments(m.linear.issue)
+      return all.filter((c) => c.id === root || c.parent === root).map((c) => `${c.author}: ${c.body}`).join('\n\n')
+    },
+    reply: (m, body) => {
+      if (!m.linear) throw new Error('not a Linear comment')
+      return linear.reply(m.linear.issue, m.linear.parent ?? m.linear.comment, body)
+    },
+  },
+})
+let myLogin = ''
+const requests = new Requests({
+  cfg: () => runner.config,
+  store,
+  runner,
+  linear,
+  slack,
+  nightShift,
+  json: (prompt, name) => assistant.sealed(prompt, name),
+  telegram: (text) => telegram.sendPlain(text),
+  me: async () => (myLogin ||= await ghLogin(cfg.repo.path).catch(() => '')),
+})
+runner.onPushed = (t, head) => requests.onPushed(t, head)
 slack.onMessage = (m) => nightShift.onMessage(m)
 slack.nightOn = () => nightShift.on()
 slack.nightSince = () => (nightShift.on() ? store.nightShift().since : null)
@@ -715,7 +749,14 @@ async function main(): Promise<void> {
         if (!m) throw new Error('unknown mention')
         return slack.summarize(m)
       },
-      reply: (id, text) => slack.reply(id, text),
+      // a Linear comment from Night Shift is answered in its Linear thread, as you
+      reply: async (id, text) => {
+        const m = store.slackMentions().find((x) => x.id === id)
+        if (m?.source !== 'linear' || !m.linear) return slack.reply(id, text)
+        const url = await linear.reply(m.linear.issue, m.linear.parent ?? m.linear.comment, text)
+        store.putSlackMention({ ...m, status: 'done' })
+        return url ?? ''
+      },
       done: (id) => slack.done(id),
       doneAll: () => store.doneAllMentions(),
       check: () => slack.pollMentions(),
@@ -757,6 +798,18 @@ async function main(): Promise<void> {
       return { overrides: store.snapshot().settings ?? {}, effective: pick(runner.config), defaults: pick(cfg) }
     },
     pipeline: () => pipelineView(runner.config, staged),
+    requests: {
+      list: () => requests.all(),
+      scan: () => requests.tick(),
+      edit: (id, patch) => requests.edit(id, patch),
+      send: (id, quick) => requests.send(id, quick),
+      sendAll: (ticketId, quick) => requests.sendAll(ticketId, quick),
+      reply: (id, text) => requests.reply(id, text),
+      decline: (id, text) => requests.decline(id, text),
+      close: (id) => requests.close(id),
+      newTicket: (id) => requests.newTicket(id),
+      postAddressed: (id, text) => requests.postAddressed(id, text),
+    },
   })
   if (cfg.roles.curator !== 'off') scheduleDaily(cfg.roles.curatorAt, () => curate().then(() => undefined, (e: unknown) => log.warn('curator failed', e)))
   telegram.curate = curate
@@ -881,6 +934,9 @@ async function main(): Promise<void> {
   // Night Shift: on and off by your hours, your switch or your Slack status; DMs read while on
   void nightShift.tick()
   setInterval(() => void nightShift.tick().catch((e: unknown) => log.warn('night shift tick failed', e)), 60_000)
+  // requests: new comments on your open tickets, every two minutes
+  setTimeout(() => void requests.tick().catch((e: unknown) => log.warn('requests tick failed', e)), 30_000)
+  setInterval(() => void requests.tick().catch((e: unknown) => log.warn('requests tick failed', e)), 120_000)
   void watchBudget()
   // with triage.auto: the cycle a minute after start and every few hours; cached per issue
   const autoTriage = () => void (runner.config.triage.auto ? assistant.triage().catch((e: unknown) => log.warn('triage failed', e)) : undefined)
