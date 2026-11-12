@@ -1,5 +1,5 @@
 import type { Leaderboard, LeaderRow } from '@ticketflow/shared'
-import type { Linear } from './linear.js'
+import type { Tracker } from './tracker.js'
 import { ghLogin, mergedSince } from './runner/github.js'
 
 // The team's week or month: tickets done in Linear, PRs merged and reviews given on GitHub.
@@ -9,7 +9,7 @@ const TTL = 15 * 60_000
 export class Leaders {
   private readonly cache = new Map<string, Leaderboard>()
   private me = ''
-  constructor(private readonly repo: string, private readonly linear: Linear) {}
+  constructor(private readonly repo: string, private readonly linear: Tracker) {}
 
   async get(period: 'week' | 'month', fresh = false): Promise<Leaderboard> {
     const hit = this.cache.get(period)
@@ -19,15 +19,15 @@ export class Leaders {
     if (!this.me) this.me = await ghLogin(this.repo).catch(() => '')
     const me = this.me.toLowerCase()
     const [tickets, merged, started] = await Promise.all([
-      this.linear.doneSince(since).catch((e: unknown) => {
-        errors.push(`Linear: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`)
+      (this.linear.doneSince?.(since) ?? Promise.resolve([])).catch((e: unknown) => {
+        errors.push(`${this.linear.label}: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`)
         return []
       }),
       mergedSince(this.repo, since).catch((e: unknown) => {
         errors.push(`GitHub: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`)
         return []
       }),
-      this.linear.startedNow().catch(() => []),
+      (this.linear.startedNow?.() ?? Promise.resolve([])).catch(() => []),
     ])
     const prs = new Map<string, { count: number; lines: number }>()
     const reviews = new Map<string, number>()

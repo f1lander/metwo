@@ -2,7 +2,7 @@
   "name": "ticketflow",
   "private": true,
   "version": "0.1.0",
-  "description": "mevo: Linear \u2192 worktree \u2192 headless Claude \u2192 draft PR, driven from Telegram, a board and the menu bar",
+  "description": "mevo: an issue (Linear or GitHub) → worktree → a headless AI lane → draft PR, driven from a board, the menu bar and Telegram",
   "packageManager": "pnpm@10.28.0",
   "engines": {
     "node": ">=22"
@@ -16,7 +16,8 @@
     "dev:web": "pnpm --filter @ticketflow/web dev",
     "build": "pnpm -r build",
     "start": "pnpm --filter @ticketflow/daemon start",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "init:repo": "pnpm --filter @ticketflow/daemon exec tsx src/init.ts"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

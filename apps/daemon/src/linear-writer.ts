@@ -1,6 +1,6 @@
 import { markdownSection, type Ticket } from '@ticketflow/shared'
 import type { CommentMoment, Config } from './config.js'
-import type { Linear } from './linear.js'
+import type { Tracker } from './tracker.js'
 import { log } from './log.js'
 import type { Store } from './store.js'
 
@@ -9,7 +9,7 @@ import type { Store } from './store.js'
 export class LinearWriter {
   constructor(
     private readonly cfg: Config,
-    private readonly linear: Linear,
+    private readonly linear: Tracker,
     private readonly store: Store,
   ) {}
 

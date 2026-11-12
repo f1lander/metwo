@@ -9,6 +9,8 @@ import { classify } from './classifier.js'
 import { loadConfig, loadEnv, usesStages } from './config.js'
 import { pipelineView } from './pipeline-view.js'
 import { Linear, type LinearIssue } from './linear.js'
+import { GithubIssues } from './github-issues.js'
+import { NO_CYCLE, type Tracker } from './tracker.js'
 import { computeDigest, formatDigest, scheduleDaily } from './digest.js'
 import { HealthTracker } from './health.js'
 import { LinearWriter } from './linear-writer.js'
@@ -56,7 +58,12 @@ const cfg = loadConfig(env.rootDir)
 const staged = usesStages(env.rootDir)
 const store = new Store(env.dataDir)
 const live = new LiveLog()
-const linear = new Linear(env.linearApiKey, cfg.linear)
+// the tracker: Linear (needs LINEAR_API_KEY) or GitHub Issues through gh
+const linear: Tracker = (() => {
+  if (cfg.tracker.kind === 'github') return new GithubIssues(() => cfg)
+  if (!env.linearApiKey) throw new Error('missing env LINEAR_API_KEY (or set tracker.kind to "github" in ticketflow.config.json)')
+  return new Linear(env.linearApiKey, cfg.linear)
+})()
 const leaders = new Leaders(cfg.repo.path, linear)
 const metaCache = new Map<number, { at: number; meta: PrMeta }>()
 linear.onLabelColors = (colors) => store.setLabelColors(colors)
@@ -215,7 +222,7 @@ const phones = new AndroidDevices()
 phones.start()
 const humanTests = new HumanTests(() => runner.config, store, runner, phones)
 const readiness = new ReadinessCheck({ store, runner, dataDir: env.dataDir, issueView: (uuid) => linear.issueView(uuid) })
-const assistant = new Assistant({ store, runner, reviews, dataDir: env.dataDir, cycle: () => linear.cycleView(), assign: (ids) => assignAndTrack(ids), autopilotStart: (id) => autopilotStart(id) })
+const assistant = new Assistant({ store, runner, reviews, dataDir: env.dataDir, cycle: () => linear.cycleView?.() ?? Promise.resolve(NO_CYCLE), assign: (ids) => assignAndTrack(ids), autopilotStart: (id) => autopilotStart(id) })
 // The team's review knowledge: how each comment on your PRs ended (fixlog.ts).
 const fixlog = new FixLog(path.join(env.dataDir, 'knowledge'))
 let learning: FixLogView['learning'] = { running: false, done: 0, total: 0, current: null, errors: [] }
@@ -340,7 +347,7 @@ const linkReady = async (t: Ticket) => {
     const links = (await linear.states([t.uuid])).get(t.uuid)?.links ?? []
     if (links.some((l) => l.replace(/(\/pull\/\d+).*$/, '$1') === url.replace(/(\/pull\/\d+).*$/, '$1'))) return
     await linear.linkPr(t.uuid, url, `#${t.pr?.number ?? ''} ${t.title}`.trim())
-    store.journal(t.id, { kind: 'linear', title: 'Linked the PR to the Linear issue', meta: { url } })
+    store.journal(t.id, { kind: 'linear', title: `Linked the PR to the ${linear.label} issue`, meta: { url } })
   } catch (e) {
     log.warn(`${t.id}: could not link the PR in Linear`, e)
   }
@@ -455,7 +462,7 @@ async function testEngine(id: string): Promise<{ ok: boolean; text: string; mode
 }
 
 // An issue on the board: new ones are classified and announced, known ones keep their title and state.
-async function track(issue: LinearIssue, how = `assigned in Linear (${issue.state})`): Promise<Ticket> {
+async function track(issue: LinearIssue, how = `assigned in ${linear.label} (${issue.state})`): Promise<Ticket> {
   const known = store.get(issue.id)
   // not started yet: move it to the current naming; started ones keep their branch and PR
   if (known && !known.worktree && known.branch !== branchFor(issue.id)) store.patch(issue.id, { branch: branchFor(issue.id) })
@@ -508,7 +515,7 @@ async function assignAndTrack(ids: readonly string[]) {
 // A pasted link or id: onto the board, assigned to you unless you only want to track it.
 async function importIssue(ref: string, assign: boolean): Promise<Ticket> {
   const got = await linear.lookup(ref)
-  if (!got) throw new Error(`no Linear issue found for "${ref.slice(0, 80)}"`)
+  if (!got) throw new Error(`no ${linear.label} issue found for "${ref.slice(0, 80)}"`)
   if (assign && !got.found.mine) {
     const r = await linear.assignToMe([got.issue.id])
     if (r.failed.length) throw new Error(r.failed[0]?.error ?? 'could not assign it')
@@ -676,11 +683,11 @@ async function main(): Promise<void> {
       return { source: 'draft', body: preview.body, url: null, media: preview.media.map((m) => ({ ...m, local: true })) }
     },
     githubLogin: () => void githubLogin().catch(() => undefined),
-    cycle: () => linear.cycleView(),
+    cycle: () => linear.cycleView?.() ?? Promise.resolve(NO_CYCLE),
     assign: (ids) => assignAndTrack(ids),
-    find: (scope, opts) => linear.find(scope, opts),
-    projects: (q) => linear.projects(q),
-    projectByLink: (link) => linear.projectByLink(link),
+    find: (scope, opts) => linear.find?.(scope, opts) ?? Promise.resolve([]),
+    projects: (q) => linear.projects?.(q) ?? Promise.resolve([]),
+    projectByLink: (link) => linear.projectByLink?.(link) ?? Promise.resolve(null),
     lookup: async (ref) => (await linear.lookup(ref))?.found ?? null,
     importIssue: (ref, assign) => importIssue(ref, assign),
     // a hand test's shots and video, asked for as human--<run>--<file>
@@ -885,7 +892,7 @@ async function main(): Promise<void> {
   telegram.githubLogin = githubLogin
   telegram.stopAll = (shutdown) => stopEverything(shutdown)
   telegram.reviews = reviews
-  telegram.cycle = () => linear.cycleView()
+  telegram.cycle = () => linear.cycleView?.() ?? Promise.resolve(NO_CYCLE)
   telegram.assign = (ids) => assignAndTrack(ids)
   await poll()
   setInterval(() => void poll(), cfg.pipeline.pollMs)

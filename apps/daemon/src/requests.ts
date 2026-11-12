@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { type ChangeRequest, openComments, type RequestRead, type RequestSource, type SlackMention, type Ticket } from '@ticketflow/shared'
 import type { Config } from './config.js'
-import type { Linear, ThreadComment } from './linear.js'
+import type { ThreadComment } from './linear.js'
+import type { Tracker } from './tracker.js'
 import { log } from './log.js'
 import type { NightShift } from './nightshift.js'
 import type { Runner } from './runner/index.js'
@@ -58,7 +59,7 @@ interface Deps {
   readonly cfg: () => Config
   readonly store: Store
   readonly runner: Pick<Runner, 'instruct' | 'addressComments' | 'replyComment'>
-  readonly linear: Pick<Linear, 'threadComments' | 'reply' | 'createIssue' | 'download'>
+  readonly linear: Pick<Tracker, 'label' | 'threadComments' | 'reply' | 'createIssue' | 'download'>
   readonly slack: Pick<Slack, 'threadText' | 'postAsMe'>
   readonly nightShift: Pick<NightShift, 'on' | 'onMessage'>
   // a read-only model call answered with one JSON object
@@ -143,7 +144,7 @@ export class Requests {
     const m: SlackMention = {
       id: `linear:${c.id}`,
       channel: 'linear',
-      channelName: `Linear · ${t.id}`,
+      channelName: `${this.d.linear.label} · ${t.id}`,
       ts: String(Date.parse(c.createdAt) / 1000),
       threadTs: root,
       permalink: c.url,

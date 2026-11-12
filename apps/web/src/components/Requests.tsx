@@ -1,4 +1,4 @@
-import { type ChangeRequest, openRequests, type Ticket } from '@ticketflow/shared'
+import { type ChangeRequest, openRequests, type Ticket, trackerOf } from '@ticketflow/shared'
 import { AnimatePresence, motion } from 'motion/react'
 import { createContext, useContext, useState } from 'react'
 import { actions } from '../lib/api.js'
@@ -21,7 +21,8 @@ const READ: Record<ChangeRequest['read'], { label: string; tone: 'ok' | 'warn' |
   check: { label: 'check it', tone: 'warn' },
   out_of_scope: { label: 'out of scope', tone: 'neutral' },
 }
-const SOURCE: Record<ChangeRequest['sources'][number]['kind'], string> = { linear: 'Linear', github: 'PR', slack: 'Slack' }
+// a comment on the ticket itself is Linear's or, with GitHub Issues, the issue's
+const source = (kind: ChangeRequest['sources'][number]['kind'], t: Ticket | undefined) => (kind === 'linear' ? (t && trackerOf(t) === 'GitHub' ? 'Issue' : 'Linear') : kind === 'github' ? 'PR' : 'Slack')
 
 // The Requests column: asks for changes on your tickets, read by mevo, waiting for you to send them
 // to the lane, answer or decline. Grouped by ticket; sent ones stay until their reply is posted.
@@ -137,7 +138,7 @@ function RequestCard({ r, ticket }: { r: ChangeRequest; ticket: Ticket | undefin
       {r.sources.map((s) => (
         <blockquote key={`${s.kind}:${s.ref}`} className="border-l-2 border-line-2 pl-2 text-muted">
           <div className="mb-0.5 flex items-center gap-1.5 text-dim">
-            {s.author} · {SOURCE[s.kind]} · {timeAgo(s.at)} ago
+            {s.author} · {source(s.kind, ticket)} · {timeAgo(s.at)} ago
             <a href={s.url} target="_blank" rel="noreferrer" className="ml-auto text-accent-fg hover:underline">
               open
             </a>
@@ -189,7 +190,7 @@ function RequestCard({ r, ticket }: { r: ChangeRequest; ticket: Ticket | undefin
             <Button variant="primary" disabled={busy || (answer === 'reply' && !text.trim())} onClick={act(() => (answer === 'reply' ? actions.requestReply(r.id, text) : actions.requestDecline(r.id, text)), answer === 'reply' ? 'Replied' : 'Declined')}>
               {answer === 'reply' ? 'Post reply' : 'Decline'}
             </Button>
-            <span className="text-dim">posted as you, in {r.sources.map((s) => SOURCE[s.kind]).join(' and ')}</span>
+            <span className="text-dim">posted as you, in {r.sources.map((s) => source(s.kind, ticket)).join(' and ')}</span>
           </div>
         </div>
       )}

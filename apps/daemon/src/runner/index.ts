@@ -8,7 +8,7 @@ import { enabledEngines, type Engine, type EngineId, parseEngineRef, type RunRes
 import { explainFailure } from '../failure.js'
 import type { GithubBrowser } from '../github-browser.js'
 import type { Learnings } from '../learnings.js'
-import type { Linear } from '../linear.js'
+import type { Tracker } from '../tracker.js'
 import { log } from '../log.js'
 import { formatComments } from '../pr-sync.js'
 import type { Store } from '../store.js'
@@ -87,7 +87,7 @@ export class Runner {
   constructor(
     private readonly base: Config,
     private readonly store: Store,
-    private readonly linear: Linear,
+    private readonly linear: Tracker,
     private readonly notify: Notifier,
   ) {
     this.pr = new PrPublisher(() => this.cfg, store, (id) => this.flowDir(id), notify, () => this.browser)

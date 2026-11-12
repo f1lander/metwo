@@ -16,7 +16,7 @@ function roundTail(flowDir: string): string {
 export function visualCheckPrompt(cfg: Config, ticket: Ticket, flowDir: string, port: number): string {
   const known = ticket.visual?.checks.map((c) => `- ${c.what}${c.shot ? ` (${c.shot})` : ''}`).join('\n') ?? ''
   return `Visual check only for ${ticket.id} (${ticket.title}) in ${ticket.worktree ?? ''}. Do NOT change any code and make no commits.
-Start the dev server: ${cfg.repo.commands.dev} ${port} (and Storybook with ${cfg.repo.commands.storybook} ${port + 1000} if the change has stories). Use the Playwright MCP and the e2e headless wallet fixtures as the brief describes (${path.join(flowDir, 'brief.md')}).
+Start the dev server: ${cfg.repo.commands.dev} ${port} (and Storybook with ${cfg.repo.commands.storybook} ${port + 1000} if the change has stories). Use the Playwright MCP${cfg.project?.web3 ? ' and the e2e headless wallet fixtures' : ''} as the brief describes (${path.join(flowDir, 'brief.md')}).
 1. Work out every state this branch changes on screen: read git diff origin/${cfg.repo.baseBranch}...HEAD, ARM-SUMMARY.md, PR-BODY.md${known ? ` and the checks from the last visual run:\n${known}` : ''}.
 2. Shoot each state into ${path.join(flowDir, 'shots')}/ (${{ layout: 'desktop at 1440x900, plus 390x844 only where the layout changes', always: 'at 1440x900 and 390x844', never: 'desktop only, at 1440x900' }[(cfg.shots ?? SHOT_DEFAULTS).mobile]}; at most ${(cfg.shots ?? SHOT_DEFAULTS).max} in all), overwriting the after shot of the same state (same file name) so the PR's images can be swapped; new states get new numbered names. Shoot only what proves a check.
 3. Compare each new shot with the same name in ${path.join(flowDir, 'shots-prev')}/ and note any difference.

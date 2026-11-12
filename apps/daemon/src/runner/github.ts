@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { type GreptileFinding, type GreptileReview, isBotComment, markdownSection, type PrComment, type PrConversation, type PrInfo, type PrMeta, type PrReviewerState, type Ticket } from '@ticketflow/shared'
+import { closingRef, type GreptileFinding, type GreptileReview, isBotComment, markdownSection, type PrComment, type PrConversation, type PrInfo, type PrMeta, type PrReviewerState, type Ticket } from '@ticketflow/shared'
 import { sizeLine } from './quality.js'
 import { git, sh, shInput } from './shell.js'
 
@@ -162,16 +162,16 @@ export function buildPrBody(ticket: Ticket, summary: string, laneBody: string | 
       ? body.replace(SHOTS_MARK, block)
       : body.replace(/\n*## Screenshots(?: \/ Video)?\s*\n+<!-- screenshots -->\s*/, '\n\n').replace(SHOTS_MARK, '')
   } else if (block) {
-    body = body.replace(/\n*(?:Ref:|Fixes) [A-Z]+-\d+\s*$/, '') + `\n\n## Screenshots / Video\n\n${block}`
+    body = body.replace(/\n*(?:Ref:|Fixes) (?:[A-Z]+-\d+|#\d+)\s*$/, '') + `\n\n## Screenshots / Video\n\n${block}`
   }
-  body = body.replace(/\n*(?:Ref:|Fixes) [A-Z]+-\d+\s*$/, '').trim()
+  body = body.replace(/\n*(?:Ref:|Fixes) (?:[A-Z]+-\d+|#\d+)\s*$/, '').trim()
   // the size, so a reviewer knows what they are in for
   if (ticket.size && !/^- \*\*Size:\*\*/m.test(body)) {
     const line = `- **Size:** ${sizeLine(ticket.size)}`
     body = /^## Review Guide\s*$/m.test(body) ? body.replace(/^(## Review Guide\s*\n)/m, `$1${line}\n`) : `${body}\n\n${line}`
   }
-  // Fixes, not Ref: Linear only moves the issue (In Review, Done on merge) on a closing keyword
-  return `${body}\n\nFixes ${ticket.id}`
+  // Fixes, not Ref: Linear and GitHub only move or close the issue (In Review, Done on merge) on a closing keyword
+  return `${body}\n\nFixes ${closingRef(ticket)}`
 }
 
 // before/after pairs (same name once "before"/"after" is taken out) become a two-column

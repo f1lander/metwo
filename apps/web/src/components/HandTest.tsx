@@ -1,6 +1,6 @@
 import type { AndroidDevice, HumanTestRun, TestCheckKind, TestStep, Ticket } from '@ticketflow/shared'
 import { useEffect, useState } from 'react'
-import { actions, mediaUrl } from '../lib/api.js'
+import { actions, mediaUrl, useHealth } from '../lib/api.js'
 import { failed, notice } from '../lib/notice.js'
 import { PhoneMirror } from './PhoneMirror.js'
 import { Button, Mono, Pill, timeAgo } from './ui.js'
@@ -45,6 +45,8 @@ const elapsed = (iso: string) => {
 // Start; while it runs, the stage or the progress; after, the result. The steps, the editor and
 // the certificates open under it.
 export function HandTestCard({ ticket: t, phones = [] }: { ticket: Ticket; phones?: readonly AndroidDevice[] }) {
+  // no test wallet outside wallet apps
+  const web3 = useHealth(60_000).health?.web3 !== false
   const [busy, setBusy] = useState(false)
   const [edit, setEdit] = useState<TestStep[] | null>(null)
   const [open, setOpen] = useState<null | 'steps' | 'runs' | 'error'>(null)
@@ -69,7 +71,7 @@ export function HandTestCard({ ticket: t, phones = [] }: { ticket: Ticket; phone
   const hint = mobileHint(t)
   // a plan that needs a real wallet on the preview: your Chrome with MetaMask
   const needsWallet = plan?.steps.some((x) => x.check.kind === 'rpc' || x.check.kind === 'tx')
-  const best: Where = hint && ready[0] ? ready[0].serial : plan?.where === 'chrome' || (needsWallet && plan?.where !== 'mock') ? 'chrome' : plan?.where === 'preview' && t.pr ? 'preview' : 'mock'
+  const best: Where = hint && ready[0] ? ready[0].serial : plan?.where === 'chrome' || (needsWallet && plan?.where !== 'mock') ? 'chrome' : plan?.where === 'preview' && t.pr ? 'preview' : web3 ? 'mock' : 'chrome'
   const where: Where = pick && (pick === 'mock' || pick === 'chrome' || (pick === 'preview' && t.pr) || ready.some((d) => d.serial === pick)) ? pick : best
   const phone = ready.find((d) => d.serial === where)
   const go = (fn: () => Promise<unknown>, ok?: string) => async () => {
@@ -98,7 +100,7 @@ export function HandTestCard({ ticket: t, phones = [] }: { ticket: Ticket; phone
       {open === v ? '▾' : '▸'}
     </button>
   )
-  const places = [...(t.pr ? [{ k: 'preview', l: 'Preview', why: "the PR's preview deploy, as people get it" }] : []), { k: 'mock', l: 'Test wallet', why: 'the e2e setup: the app from this worktree on the local chain; mevo connects the test wallet for you, signatures go through and transactions wait for Approve in the sidebar' }, { k: 'chrome', l: 'Your Chrome', why: 'your own Chrome and MetaMask, on the app from this worktree on Sepolia; the steps panel comes with the page and takes you to each step' }, ...ready.map((d) => ({ k: d.serial, l: d.model, why: `Chrome on the ${d.model} (${d.transport})` }))]
+  const places = [...(t.pr ? [{ k: 'preview', l: 'Preview', why: "the PR's preview deploy, as people get it" }] : []), ...(web3 ? [{ k: 'mock', l: 'Test wallet', why: 'the e2e setup: the app from this worktree on the local chain; mevo connects the test wallet for you, signatures go through and transactions wait for Approve in the sidebar' }] : []), { k: 'chrome', l: 'Your Chrome', why: web3 ? 'your own Chrome and MetaMask, on the app from this worktree on Sepolia; the steps panel comes with the page and takes you to each step' : 'your own Chrome, on the app from this worktree; the steps panel comes with the page and takes you to each step' }, ...ready.map((d) => ({ k: d.serial, l: d.model, why: `Chrome on the ${d.model} (${d.transport})` }))]
   const seg = places.length === 1 ? (
     <span className="shrink-0 text-xs text-muted" title={places[0]?.why}>on the test wallet</span>
   ) : (

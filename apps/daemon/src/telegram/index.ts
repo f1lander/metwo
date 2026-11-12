@@ -143,12 +143,18 @@ export class Telegram {
     readonly live: LiveLog,
     readonly health: HealthTracker,
   ) {
-    this.bot = new Bot(token)
+    // no token: mevo runs without Telegram, every send is a no-op
+    this.bot = new Bot(token || '0:off')
+    if (!token) this.bot.api.config.use(async () => ({ ok: true, result: true }) as never)
     this.chatId = chatId
     this.wire()
   }
 
   async start(): Promise<void> {
+    if (!this.token) {
+      this.health.telegram = { ok: null, detail: 'off: no TELEGRAM_BOT_TOKEN', at: new Date().toISOString(), bot: null }
+      return
+    }
     try {
       const me = await this.bot.api.getMe()
       this.health.telegram = { ...this.health.ok(), detail: 'polling', bot: `@${me.username}` }

@@ -2,6 +2,7 @@ import { LinearClient } from '@linear/sdk'
 import type { CycleView, FindScope, FoundIssue, LinearIssueView, LinearProject, LinearPerson } from '@ticketflow/shared'
 import type { Config } from './config.js'
 import { log } from './log.js'
+import type { Tracker } from './tracker.js'
 
 export interface LinearIssue {
   readonly id: string
@@ -215,7 +216,9 @@ export interface ThreadComment {
   readonly bot: boolean
 }
 
-export class Linear {
+export class Linear implements Tracker {
+  readonly kind = 'linear' as const
+  readonly label = 'Linear'
   private readonly client: LinearClient
   private stateIds: Map<string, string> | null = null
   // label colors seen in any response, handed to the store for the app

@@ -1,6 +1,6 @@
 import { type LinearSyncRow, type PrPhase, syncWant, type Ticket } from '@ticketflow/shared'
 import type { Config } from './config.js'
-import type { Linear } from './linear.js'
+import type { Tracker } from './tracker.js'
 import type { Store } from './store.js'
 
 // github.com/o/r/pull/12 and github.com/o/r/pull/12/files are the same PR
@@ -13,7 +13,7 @@ const phase = (t: Ticket): PrPhase | null => (!t.pr || t.pr.state === 'CLOSED' ?
 export class LinearSync {
   constructor(
     private readonly cfg: () => Config,
-    private readonly linear: Pick<Linear, 'states' | 'moveToState' | 'linkPr'>,
+    private readonly linear: Pick<Tracker, 'states' | 'moveToState' | 'linkPr'>,
     private readonly store: Pick<Store, 'all' | 'get' | 'patch' | 'journal'>,
   ) {}
 

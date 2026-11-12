@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import path from 'node:path'
 import { myThreads, type OpenPr, type PrReview, type ReviewDepth, type ReviewFinding, type ReviewReport } from '@ticketflow/shared'
 import type { Config } from './config.js'
-import type { Linear } from './linear.js'
+import type { Tracker } from './tracker.js'
 import { log } from './log.js'
 import { commentableLines, commitsSince, ghLogin, listOpenPrs, postReview, prAuthorEmails, prConversation, replyToReviewComment, repoSlug, resolveThread, type ReviewPr, reviewPr, searchPrs } from './runner/github.js'
 import type { Runner } from './runner/index.js'
@@ -42,7 +42,7 @@ export class Reviews {
     private readonly cfg: Config,
     private readonly store: Store,
     private readonly runner: Runner,
-    private readonly linear: Linear,
+    private readonly linear: Tracker,
     private readonly notify: ReviewNotifier,
   ) {}
 
@@ -98,10 +98,10 @@ export class Reviews {
         for (const p of await searchPrs(this.cwd, this.slug, 'mentions')) if (!found.has(p.number)) found.set(p.number, { source: 'mentioned', note: `mentioned you · ${p.author}` })
       })
     }
-    if (r.linear) {
+    if (r.linear && this.linear.mentionedPrs) {
       await collect('Linear mentions', async () => {
         const prefix = `https://github.com/${this.slug}/pull/`.toLowerCase()
-        for (const m of await this.linear.mentionedPrs()) {
+        for (const m of (await this.linear.mentionedPrs?.()) ?? []) {
           if (!m.url.toLowerCase().startsWith(prefix)) continue
           const n = Number(m.url.slice(prefix.length))
           if (n && !found.has(n)) found.set(n, { source: 'linear', note: `${m.by} in ${m.issue || 'Linear'}` })

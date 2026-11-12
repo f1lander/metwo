@@ -1311,6 +1311,10 @@ export interface Health {
   readonly daemon: CheckState
   readonly telegram: CheckState & { readonly bot: string | null }
   readonly linear: CheckState & { readonly lastPollAt: string | null; readonly tracked: number }
+  // which tracker the linear check above is about
+  readonly tracker?: { readonly kind: 'linear' | 'github'; readonly label: string }
+  // a wallet app: the hand test offers the test wallet and the wallet steps
+  readonly web3?: boolean
   readonly github: CheckState & { readonly login?: string | null }
   readonly claude: CheckState
   readonly e2e: CheckState & { readonly ports: Readonly<Record<string, boolean>> }
@@ -1477,3 +1481,14 @@ export interface ChangeRequest {
 // the requests still waiting on you for a ticket
 export const openRequests = (rs: readonly ChangeRequest[] | undefined, ticketId?: string): readonly ChangeRequest[] =>
   (rs ?? []).filter((r) => (r.status === 'new' || r.status === 'addressed') && (!ticketId || r.ticketId === ticketId))
+
+// Where a ticket lives, from its link: GitHub Issues or Linear.
+export function trackerOf(t: { readonly url: string }): 'GitHub' | 'Linear' {
+  return /github\.com\/[^/]+\/[^/]+\/issues\/\d+/i.test(t.url) ? 'GitHub' : 'Linear'
+}
+
+// What the PR's closing line names: "#12" for a GitHub issue in the repo, the Linear id otherwise.
+export function closingRef(t: { readonly id: string; readonly url: string }): string {
+  const n = /github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/i.exec(t.url)?.[1]
+  return n ? `#${n}` : t.id
+}

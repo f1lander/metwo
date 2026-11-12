@@ -100,6 +100,8 @@ export class HealthTracker {
       daemon: { ok: true, detail: `up since ${this.startedAt.slice(11, 19)} UTC`, at: now() },
       telegram: this.telegram,
       linear: this.linear,
+      web3: this.cfg.project.web3 !== false,
+      tracker: { kind: this.cfg.tracker.kind, label: this.cfg.tracker.kind === 'github' ? 'GitHub' : 'Linear' },
       github: this.github,
       claude: this.claude,
       e2e: this.e2e,

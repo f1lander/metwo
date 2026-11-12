@@ -1,7 +1,7 @@
 import type { CycleIssue, CycleView, FoundIssue, LinearProject } from '@ticketflow/shared'
 import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { findIssues, importIssue, loadCycle, loadProjects, lookupIssue, projectByLink, runAssist, triageNow } from '../lib/api.js'
+import { findIssues, importIssue, loadCycle, loadProjects, lookupIssue, projectByLink, runAssist, triageNow, useHealth } from '../lib/api.js'
 import { useBoardIds } from '../lib/estimates.js'
 import { href } from '../lib/route.js'
 import { useTriage, useTriageMap } from '../lib/triage.js'
@@ -18,13 +18,18 @@ type AnyIssue = CycleIssue & Partial<Pick<FoundIssue, 'team' | 'project' | 'cycl
 const othersOwn = (i: AnyIssue) => !!i.assignee && !i.mine
 
 const looksLikeProject = (s: string) => /linear\.app\/[^/\s]+\/project\//.test(s)
-const looksLikeRef = (s: string) => /linear\.app\/[^/\s]+\/issue\/|^[A-Za-z][A-Za-z0-9]*-\d+$|^#?\d+$/.test(s.trim())
+const looksLikeRef = (s: string) => /linear\.app\/[^/\s]+\/issue\/|github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+|^[A-Za-z][A-Za-z0-9]*-\d+$|^#?\d+$/.test(s.trim())
 
 // Find tickets to work on: the current cycle, the team's backlog, any project, a text search,
 // or one issue by its Linear link or id. Take assigns it to you; Track only puts it on the board.
 export function CycleSheet() {
   const [open, setOpen] = useState(false)
+  // GitHub Issues has no cycles or projects: backlog, search and links only
+  const github = useHealth(60_000).health?.tracker?.kind === 'github'
   const [tab, setTab] = useState<Tab>('cycle')
+  useEffect(() => {
+    if (github && (tab === 'cycle' || tab === 'project')) setTab('backlog')
+  }, [github, tab])
   const [cycle, setCycle] = useState<CycleView | null>(null)
   const [list, setList] = useState<readonly FoundIssue[] | null>(null)
   const [projects, setProjects] = useState<readonly LinearProject[] | null>(null)
@@ -251,7 +256,9 @@ export function CycleSheet() {
                     ['project', 'Projects'],
                     ['search', 'Search'],
                   ] as const
-                ).map(([k, label]) => (
+                )
+                  .filter(([k]) => !github || (k !== 'cycle' && k !== 'project'))
+                  .map(([k, label]) => (
                   <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={`rounded-md px-2.5 py-1 ${tab === k ? 'bg-raised text-fg' : 'text-muted hover:text-fg'}`}>
                     {label}
                   </button>

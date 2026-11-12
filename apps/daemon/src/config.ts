@@ -16,6 +16,9 @@ export interface Config {
     readonly worktreesDir: string
     // branch for each ticket; {id} is the Linear identifier, e.g. "linear/{id}" → linear/WEB-2049
     readonly branchPattern: string
+    // the PR description: "builtin" (mevo's sections), "repo" (the repo's .github pull request
+    // template when it has one), or a path in the repo
+    readonly prTemplate: string
     readonly commands: {
       readonly test: string
       readonly typecheck: string
@@ -60,6 +63,24 @@ export interface Config {
   readonly slack: { readonly threads: boolean; readonly notify: boolean; readonly announce: boolean; readonly channel: string; readonly mentions: boolean; readonly mentionsMinutes: number; readonly reviewSummaryAt: string; readonly rollCalls: readonly RollCall[]; readonly nightShift: NightShiftConfig; readonly autoNudge: boolean }
   // local services the app needs for browser checks; null = detect from the repo (apps-monorepo preset)
   readonly e2e: E2eConfig | null
+  // what kind of app this is. web3: a wallet app (connect, signatures, transactions), which turns on
+  // the wallet steps of the hand test and the visual check; null = yes when the e2e preset is found
+  readonly project: { readonly name: string; readonly web3: boolean | null }
+  // where tickets come from: Linear, or GitHub Issues in the repo (through gh). The linear block's
+  // states and comments apply to both; teamKey and the watch lists are Linear's.
+  readonly tracker: {
+    readonly kind: 'linear' | 'github'
+    readonly github: {
+      // owner/name; empty = the repo's own GitHub remote
+      readonly repo: string
+      // only issues with all of these labels; empty = every open issue assigned to you
+      readonly labels: readonly string[]
+      // ticket ids are "<idPrefix>-<number>", e.g. GH-12
+      readonly idPrefix: string
+      // mirror In Progress, In Review and QA as "status: <name>" labels (Done closes the issue either way)
+      readonly stateLabels: boolean
+    }
+  }
   readonly linear: {
     readonly teamKey: string
     // teams whose issues assigned to you show up on the board: [teamKey] by default, ["*"] for all.
@@ -267,7 +288,7 @@ export const APPS_MONOREPO_E2E: E2eConfig = {
 
 export type CommentMoment = 'review_ready' | 'no_change' | 'pr_opened' | 'qa' | 'done' | 'failed'
 
-// Every key except repo.path and linear.teamKey has a default, so a config file only
+// Every key except repo.path (and linear.teamKey with Linear) has a default, so a config file only
 // needs what differs. Objects merge key by key; arrays and values replace.
 export const SHOT_DEFAULTS: ShotRules = { mode: 'lane', speed: 1.5, max: 8, mobile: 'layout', before: 'changed', video: 'interactions', stories: 4 }
 
@@ -277,6 +298,7 @@ const DEFAULTS: Config = {
     baseBranch: 'main',
     worktreesDir: '.worktrees',
     branchPattern: 'linear/{id}',
+    prTemplate: 'builtin',
     commands: {
       test: '',
       typecheck: '',
@@ -338,6 +360,8 @@ const DEFAULTS: Config = {
   },
   slack: { threads: true, notify: false, announce: false, channel: '', mentions: false, mentionsMinutes: 5, reviewSummaryAt: '', rollCalls: [], autoNudge: false, nightShift: { enabled: false, mode: 'shadow', from: '22:00', to: '07:30', days: 'daily', followSlack: true, wake: [], dmAsMe: false } },
   e2e: null,
+  project: { name: '', web3: null },
+  tracker: { kind: 'linear', github: { repo: '', labels: [], idPrefix: 'GH', stateLabels: false } },
   linear: {
     teamKey: '',
     watchStates: ['Todo', 'In Progress'],
@@ -418,7 +442,8 @@ const DEFAULTS: Config = {
 }
 
 export interface Env {
-  readonly linearApiKey: string
+  // only needed when the tracker is Linear
+  readonly linearApiKey: string | null
   readonly telegramToken: string
   readonly telegramChatId: string
   readonly dataDir: string
@@ -429,20 +454,15 @@ export interface Env {
   readonly slack: { readonly botToken: string | null; readonly userToken: string | null; readonly userId: string | null }
 }
 
-function required(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`missing env ${name} (see .env.example)`)
-  return value
-}
-
 // The repo root, from this file's place in it (apps/daemon/src), wherever the daemon is started.
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
 export function loadEnv(): Env {
   return {
-    linearApiKey: required('LINEAR_API_KEY'),
-    telegramToken: required('TELEGRAM_BOT_TOKEN'),
-    telegramChatId: required('TELEGRAM_CHAT_ID'),
+    linearApiKey: process.env.LINEAR_API_KEY || null,
+    // optional: without them mevo runs without the Telegram bot
+    telegramToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
     dataDir: path.resolve(ROOT, process.env.METWO_DATA_DIR ?? process.env.TICKETFLOW_DATA_DIR ?? 'data'),
     rootDir: ROOT,
     dashboardToken: process.env.DASHBOARD_TOKEN || null,
@@ -467,11 +487,11 @@ export function loadConfig(rootDir: string): Config {
   const cfg = merge(DEFAULTS as unknown as Json, fromStages(JSON.parse(readFileSync(file, 'utf8')) as Json)) as unknown as Config
   const missing = [
     ['repo.path', cfg.repo.path],
-    ['linear.teamKey', cfg.linear.teamKey],
+    ...(cfg.tracker.kind === 'linear' ? [['linear.teamKey', cfg.linear.teamKey]] : []),
   ].filter(([, v]) => !v)
   if (missing.length) throw new Error(`ticketflow.config.json needs ${missing.map(([k]) => k).join(', ')}`)
   const e2e = cfg.e2e ?? detectE2e(cfg.repo.path)
-  const withE2e = e2e === cfg.e2e ? cfg : { ...cfg, e2e }
+  const withE2e = { ...(e2e === cfg.e2e ? cfg : { ...cfg, e2e }), project: { ...cfg.project, web3: cfg.project.web3 ?? e2e !== null } }
   // the old switch for auto-starting small tickets is autopilot now
   const out = withE2e.pipeline.autoStart && !withE2e.autopilot.enabled ? { ...withE2e, autopilot: { ...withE2e.autopilot, enabled: true } } : withE2e
   return laneShots(out)
