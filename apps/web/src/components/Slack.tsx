@@ -5,6 +5,7 @@ import { nightActions, slackActions } from '../lib/api.js'
 import { failed, notice } from '../lib/notice.js'
 import { desktop } from '../lib/tauri.js'
 import { Button, ConfirmButton, Pill, timeAgo } from './ui.js'
+import { MentionRequest } from './Requests.js'
 
 const KIND: Record<NonNullable<SlackMention['action']>['kind'], { label: string; tone: 'neutral' | 'warn' | 'accent' | 'ok' }> = {
   none: { label: 'FYI', tone: 'neutral' },
@@ -121,6 +122,7 @@ export function Mention({ mention: m }: { mention: SlackMention }) {
           ))}
         </div>
       )}
+      {m.status !== 'summarizing' && m.status !== 'new' && !m.test && <MentionRequest mention={m} />}
       {m.status !== 'done' && m.status !== 'summarizing' && (
         <div className="flex flex-col gap-1.5">
           {(m.action?.kind === 'reply' || writing || reply) && (

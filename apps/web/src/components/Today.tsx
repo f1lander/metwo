@@ -9,6 +9,7 @@ import { askMetwo, loadToday, runAssist, triageNow } from '../lib/api.js'
 import { failed, notice } from '../lib/notice.js'
 import { ASK_EVENT } from '../lib/mascot.js'
 import { href } from '../lib/route.js'
+import { RequestsData } from './Requests.js'
 import { useTriageMap } from '../lib/triage.js'
 import { openCycle } from './Cycle.js'
 import { SlackMentions } from './Slack.js'
@@ -114,6 +115,7 @@ export function TodayPage({ tickets, reviews, mentions = [], night, slack = fals
           <p className="mt-0.5 text-[11px] text-dim">From your tickets, PRs, reviews and the cycle, as they are right now. No AI runs here until you ask below.</p>
         </header>
 
+        <RequestsData.Provider value={{ requests, tickets }}>
         <NightShiftCard night={night} mentions={mentions} slack={slack} />
         {openRequests(requests).length > 0 && (
           <a href={href.board} className="flex items-center gap-2 rounded-lg border border-[#4a3b22] bg-[#1a1712] px-4 py-3 text-sm hover:border-[#e0a458]">
@@ -126,6 +128,7 @@ export function TodayPage({ tickets, reviews, mentions = [], night, slack = fals
           </a>
         )}
         <SlackMentions mentions={mentions.filter((m) => !handoffIds(night).has(m.id))} />
+        </RequestsData.Provider>
 
         <ChangesRequested tickets={tickets} />
         <NudgesToday tickets={tickets} />

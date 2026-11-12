@@ -99,40 +99,57 @@ export class Requests {
 
   // every few minutes: new Linear comments, PR comments and Slack messages about your open tickets
   async tick(): Promise<void> {
-    if (this.busy) return
+    if (!this.busy) await this.scan(null)
+  }
+
+  // Re-check: read again what came in over the last hours, even what was already read or skipped
+  // the first time, in case something was missed. Messages that already made a request are skipped.
+  async recheck(hours = 48): Promise<number> {
+    const before = this.d.store.requests().length
+    await this.scan(new Date(Date.now() - hours * 3_600_000).toISOString())
+    return this.d.store.requests().length - before
+  }
+
+  private async scan(since: string | null): Promise<void> {
+    if (this.busy) throw new Error('already checking')
     this.busy = true
     try {
       const tickets = this.d.store.all().filter((t) => !t.replay && t.uuid && OPEN.includes(t.status))
-      for (const t of tickets) await this.scanTicket(t).catch((e: unknown) => log.warn(`${t.id}: requests scan failed`, e))
-      await this.scanSlack(tickets).catch((e: unknown) => log.warn('requests: slack scan failed', e))
+      for (const t of tickets) await this.scanTicket(t, since).catch((e: unknown) => log.warn(`${t.id}: requests scan failed`, e))
+      await this.scanSlack(tickets, since).catch((e: unknown) => log.warn('requests: slack scan failed', e))
     } finally {
       this.busy = false
     }
   }
 
-  private async scanTicket(t: Ticket): Promise<void> {
-    const seen = this.d.store.requestSeen()
+  // already a source of a request: never read twice
+  private known(kind: RequestSource['kind'], match: (s: RequestSource) => boolean): boolean {
+    return this.d.store.requests().some((r) => r.sources.some((s) => s.kind === kind && match(s)))
+  }
+
+  private async scanTicket(t: Ticket, since: string | null = null): Promise<void> {
+    const seen = since ? new Set<string>() : this.d.store.requestSeen()
     const comments = await this.d.linear.threadComments(t.uuid).catch(() => [] as ThreadComment[])
     const prComments = t.pr ? openComments(t) : []
     const keys = [...comments.map((c) => `linear:${c.id}`), ...prComments.map((c) => `github:${c.id}`)]
     // the first look at a ticket: what was already there is in the brief, not a new request
-    if (!this.d.store.baselined(t.id)) {
+    if (!since && !this.d.store.baselined(t.id)) {
       this.d.store.markRequestSeen(keys.filter((k) => !seen.has(k)), t.id)
       return
     }
     for (const c of comments) {
       const key = `linear:${c.id}`
-      if (seen.has(key) || !c.id) continue
+      if (!c.id || (since ? c.createdAt < since || this.known('linear', (x) => x.ref.split(':')[1] === c.id) : seen.has(key))) continue
       this.d.store.markRequestSeen([key])
       if (c.mine || c.bot || !c.body.trim()) continue
       const root = c.parent ?? c.id
       const thread = comments.filter((x) => x.id === root || x.parent === root).map((x) => `${x.author}: ${x.body}`).join('\n\n')
-      if (this.d.nightShift.on() && (this.d.cfg().slack.nightShift.linear ?? 'draft') !== 'off') await this.night(t, c, root)
+      if (!since && this.d.nightShift.on() && (this.d.cfg().slack.nightShift.linear ?? 'draft') !== 'off') await this.night(t, c, root)
       await this.intake({ ticket: t, thread, source: { kind: 'linear', url: c.url || t.url, author: c.author, at: c.createdAt, quote: c.body.slice(0, 2000), ref: `${t.uuid}:${c.id}:${root}` } })
     }
     for (const c of prComments) {
       const key = `github:${c.id}`
-      if (seen.has(key)) continue
+      if (since ? c.createdAt < since || this.known('github', (x) => x.ref === c.id) : seen.has(key)) continue
       this.d.store.markRequestSeen([key])
       const thread = c.path ? `On ${c.path}${c.line ? `:${c.line}` : ''}` : ''
       await this.intake({ ticket: t, thread, prComment: c.id, source: { kind: 'github', url: c.url, author: c.author, at: c.createdAt, quote: c.body.slice(0, 2000), ref: c.id } })
@@ -160,10 +177,10 @@ export class Requests {
     await this.d.nightShift.onMessage(m).catch((e: unknown) => log.warn(`${t.id}: night shift on a Linear comment failed`, e))
   }
 
-  private async scanSlack(tickets: readonly Ticket[]): Promise<void> {
-    const seen = this.d.store.requestSeen()
-    const mentions = this.d.store.slackMentions().filter((m) => m.source !== 'linear' && !m.test && (m.status === 'ready' || m.status === 'done'))
-    if (!this.d.store.baselined('slack')) {
+  private async scanSlack(tickets: readonly Ticket[], since: string | null = null): Promise<void> {
+    const seen = since ? new Set<string>() : this.d.store.requestSeen()
+    const mentions = this.d.store.slackMentions().filter((m) => m.source !== 'linear' && !m.test && (m.status === 'ready' || m.status === 'done') && (!since || (m.at >= since && !this.known('slack', (x) => x.ref === `${m.channel}:${m.threadTs || m.ts}` && x.quote === m.text.slice(0, 2000)))))
+    if (!since && !this.d.store.baselined('slack')) {
       this.d.store.markRequestSeen(mentions.map((m) => `slack:${m.id}`), 'slack')
       return
     }
@@ -179,9 +196,35 @@ export class Requests {
     }
   }
 
-  // reads one message; a change or a bug becomes a request (or joins one that asks the same)
-  async intake(msg: Message): Promise<ChangeRequest | null> {
-    const reading = await this.read(msg)
+  // Your button on a Slack mention (or a Linear comment from Night Shift): read it for a change
+  // now, and make a request even when mevo would not have, so you look at it with the lane's
+  // instruction ready. The ticket comes from the message's links, or you pick it.
+  async fromMention(mentionId: string, ticketId?: string): Promise<ChangeRequest> {
+    const m = this.d.store.slackMentions().find((x) => x.id === mentionId)
+    if (!m) throw new Error('that message is gone')
+    const tickets = this.d.store.all().filter((t) => !t.replay)
+    const t = ticketId ? this.d.store.get(ticketId) : m.linear ? this.d.store.get(m.linear.ticket) : ticketFor(`${m.text}\n${m.summary ?? ''}\n${(m.action?.links ?? []).join('\n')}`, tickets)
+    if (!t) throw new Error('no ticket on the board for this message: pick one')
+    const source: RequestSource = m.linear
+      ? { kind: 'linear', url: m.permalink, author: m.from, at: m.at, quote: m.text.slice(0, 2000), ref: `${m.linear.issue}:${m.linear.comment}:${m.linear.parent ?? m.linear.comment}` }
+      : { kind: 'slack', url: m.permalink, author: m.from, at: m.at, quote: m.text.slice(0, 2000), ref: `${m.channel}:${m.threadTs || m.ts}` }
+    const existing = this.d.store.requests().find((r) => r.status !== 'declined' && r.sources.some((s) => s.kind === source.kind && s.ref === source.ref && s.quote === source.quote))
+    if (existing) return existing
+    const thread = m.linear ? m.text : await this.d.slack.threadText(m.channel, m.threadTs).catch(() => m.text)
+    this.d.store.markRequestSeen([`slack:${m.id}`])
+    const r = await this.intake({ ticket: t, thread, source }, true)
+    if (!r) throw new Error('mevo could not read that message; try again')
+    return r
+  }
+
+  // reads one message; a change or a bug becomes a request (or joins one that asks the same).
+  // forced (your button): whatever it reads, it becomes a request to check
+  async intake(msg: Message, forced = false): Promise<ChangeRequest | null> {
+    const read = await this.read(msg)
+    const reading: Reading | null =
+      forced && read && read.kind !== 'change' && read.kind !== 'bug'
+        ? { ...read, kind: 'change', read: 'check', why: `you sent it here; mevo read it as ${read.kind === 'fyi' ? 'nothing to do' : `a ${read.kind}`}${read.why ? `: ${read.why}` : ''}`, ask: read.ask || msg.source.quote.replace(/\s+/g, ' ').slice(0, 160), instruction: read.instruction || `Check this and change what is needed: ${msg.source.quote.replace(/\s+/g, ' ').slice(0, 600)}` }
+        : read
     if (!reading || (reading.kind !== 'change' && reading.kind !== 'bug')) return null
     const t = msg.ticket
     const now = new Date().toISOString()

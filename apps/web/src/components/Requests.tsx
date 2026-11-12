@@ -1,7 +1,7 @@
 import { type ChangeRequest, openRequests, type Ticket, trackerOf } from '@ticketflow/shared'
 import { AnimatePresence, motion } from 'motion/react'
 import { createContext, useContext, useState } from 'react'
-import { actions } from '../lib/api.js'
+import { actions, slackActions } from '../lib/api.js'
 import { failed, notice } from '../lib/notice.js'
 import { href } from '../lib/route.js'
 import { Button, Count, Pill, timeAgo } from './ui.js'
@@ -9,6 +9,9 @@ import { Button, Count, Pill, timeAgo } from './ui.js'
 // open requests per ticket, for the chip on the ticket's card
 export const RequestCounts = createContext<Readonly<Record<string, number>>>({})
 export const useRequestCount = (id: string) => useContext(RequestCounts)[id] ?? 0
+
+// the requests and the board's tickets, for a message card that can make or show its request
+export const RequestsData = createContext<{ readonly requests: readonly ChangeRequest[]; readonly tickets: readonly Ticket[] }>({ requests: [], tickets: [] })
 
 export function requestCounts(rs: readonly ChangeRequest[] | undefined): Record<string, number> {
   const out: Record<string, number> = {}
@@ -40,6 +43,18 @@ export function RequestsColumn({ requests, tickets }: { requests: readonly Chang
       setScanning(false)
     }
   }
+  const [rechecking, setRechecking] = useState(false)
+  const recheck = async () => {
+    setRechecking(true)
+    try {
+      const { made } = await actions.requestRecheck(48)
+      notice({ title: made ? `Re-checked the last 2 days: ${made} new request${made === 1 ? '' : 's'}` : 'Re-checked the last 2 days: nothing missed', tone: 'ok' })
+    } catch (err) {
+      failed(err)
+    } finally {
+      setRechecking(false)
+    }
+  }
   const waiting = openRequests(requests).length
   return (
     <section className="flex min-h-0 w-[88vw] max-w-[420px] shrink-0 snap-start flex-col md:w-auto md:max-w-none md:min-w-0">
@@ -49,6 +64,9 @@ export function RequestsColumn({ requests, tickets }: { requests: readonly Chang
         <Count value={waiting} className="text-dim" />
         <button type="button" onClick={() => void scan()} disabled={scanning} className="ml-auto text-dim hover:text-fg" title="read new Linear comments, PR comments and Slack messages now">
           {scanning ? 'checking…' : 'check now'}
+        </button>
+        <button type="button" onClick={() => void recheck()} disabled={rechecking} className="text-dim hover:text-fg" title="read again every Linear comment, PR comment and Slack message from the last 2 days, even ones already read, in case one was missed">
+          {rechecking ? 're-checking…' : 're-check 2 days'}
         </button>
       </h2>
       <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-1 pt-4 pb-4 max-md:pb-24 md:pt-0">
@@ -211,5 +229,64 @@ function RequestCard({ r, ticket }: { r: ChangeRequest; ticket: Ticket | undefin
         </div>
       )}
     </motion.article>
+  )
+}
+
+// On a Slack mention or a Linear comment: its request if it made one, or a button to make one now
+export function MentionRequest({ mention: m }: { mention: { id: string; channel: string; threadTs: string; ts: string; text: string; linear?: { comment: string } } }) {
+  const { requests, tickets } = useContext(RequestsData)
+  const [busy, setBusy] = useState(false)
+  const [pick, setPick] = useState<string | null>(null)
+  const quote = m.text.slice(0, 2000)
+  const made = requests.find((r) => r.sources.some((s) => (m.linear ? s.kind === 'linear' && s.ref.split(':')[1] === m.linear.comment : s.kind === 'slack' && s.ref === `${m.channel}:${m.threadTs || m.ts}` && s.quote === quote)))
+  const open = tickets.filter((t) => t.status !== 'done' && t.status !== 'skipped' && !t.replay)
+  const go = async (ticketId?: string) => {
+    setBusy(true)
+    try {
+      await slackActions.request(m.id, ticketId)
+      setPick(null)
+      notice({ title: 'In Requests: mevo read it and drafted the instruction', tone: 'ok' })
+    } catch (err) {
+      if (/pick one/.test(err instanceof Error ? err.message : '')) setPick(open[0]?.id ?? '')
+      else failed(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (made)
+    return (
+      <a href={href.board} className="flex items-center gap-2 rounded-md border border-[#4a3b22] bg-[#1a1712] px-2 py-1.5 text-fg-2 hover:border-[#e0a458]">
+        <span className="size-1.5 shrink-0 rounded-full bg-[#e0a458]" aria-hidden="true" />
+        <span className="min-w-0 truncate">
+          In Requests on {made.ticketId}: {made.ask}
+        </span>
+        <span className="ml-auto shrink-0 text-dim">{made.status === 'new' ? 'waiting for you' : made.status}</span>
+      </a>
+    )
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {pick === null ? (
+        <button type="button" disabled={busy} onClick={() => void go()} className="text-[#e0a458] hover:underline" title="mevo reads it for a change on one of your tickets and puts it in Requests, with the lane's instruction ready">
+          {busy ? 'reading…' : 'Check for a change → Requests'}
+        </button>
+      ) : (
+        <>
+          <span className="text-muted">Which ticket?</span>
+          <select value={pick} onChange={(e) => setPick(e.target.value)} className="rounded-md border border-line-2 bg-panel px-1.5 py-1 text-fg">
+            {open.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.id} · {t.title.slice(0, 50)}
+              </option>
+            ))}
+          </select>
+          <Button disabled={busy || !pick} onClick={() => void go(pick)}>
+            Make the request
+          </Button>
+          <button type="button" className="text-dim hover:text-fg" onClick={() => setPick(null)}>
+            cancel
+          </button>
+        </>
+      )}
+    </div>
   )
 }

@@ -115,6 +115,8 @@ export interface Controls {
   readonly requests: {
     readonly list: () => readonly ChangeRequest[]
     readonly scan: () => Promise<void>
+    readonly recheck: (hours: number) => Promise<number>
+    readonly fromMention: (mentionId: string, ticketId?: string) => Promise<ChangeRequest>
     readonly edit: (id: string, patch: { instruction?: string; reply?: string }) => ChangeRequest
     readonly send: (id: string, quick: boolean) => Promise<ChangeRequest>
     readonly sendAll: (ticketId: string, quick: boolean) => Promise<readonly ChangeRequest[]>
@@ -315,6 +317,15 @@ export function startServer(port: number, host: string, rootDir: string, store: 
   app.post('/api/requests/scan', async (c) => {
     await controls.requests.scan()
     return c.json({ ok: true, requests: controls.requests.list() })
+  })
+  app.post('/api/requests/recheck', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { hours?: unknown }
+    const hours = typeof body.hours === 'number' && body.hours > 0 && body.hours <= 24 * 14 ? body.hours : 48
+    return c.json({ ok: true, made: await controls.requests.recheck(hours) })
+  })
+  app.post('/api/slack/mentions/:mid/request', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { ticketId?: unknown }
+    return c.json({ ok: true, request: await controls.requests.fromMention(c.req.param('mid'), typeof body.ticketId === 'string' && body.ticketId ? body.ticketId : undefined) })
   })
   app.post('/api/requests/:rid', async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { instruction?: unknown; reply?: unknown }

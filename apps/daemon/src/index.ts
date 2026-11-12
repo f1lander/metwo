@@ -808,6 +808,8 @@ async function main(): Promise<void> {
     requests: {
       list: () => requests.all(),
       scan: () => requests.tick(),
+      recheck: (hours) => requests.recheck(hours),
+      fromMention: (mentionId, ticketId) => requests.fromMention(mentionId, ticketId),
       edit: (id, patch) => requests.edit(id, patch),
       send: (id, quick) => requests.send(id, quick),
       sendAll: (ticketId, quick) => requests.sendAll(ticketId, quick),
