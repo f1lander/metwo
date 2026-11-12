@@ -280,6 +280,20 @@ Today. **I'm back** ends it.
 - Mention summaries and notifications stay quiet while it runs. Slack scopes: the bot's
   `chat:write`; your token's `im:history`, `im:read`, `users:read`, `users.profile:read`.
 
+### Reviewing a teammate's PR
+
+- **Full review** checks the PR out, installs, runs the gates and the app, and drafts findings
+  with screenshots. While it runs it shows on the board under Working; when the report waits for
+  you, under Needs me.
+- **Ask the reviewer**: a chat under the lane log. **Ask** gets an answer from the code and the
+  review, nothing runs. **Check more** sends it back to work: it can open the app, take new
+  screenshots and update the findings.
+- **Test it yourself**: the review's manual steps become a hand test (your Chrome, or the e2e
+  test wallet), the same as on your own tickets.
+- **Post review**: everything is editable and kept as you type. Attach the review's screenshots
+  to any finding, add your hand test (each step ✅/❌ with screenshots), pick Comment, Request
+  changes or Approve. It posts as you; screenshots go through mevo's signed-in GitHub browser.
+
 ### Review follow-up
 
 - **Your PRs.** mevo reads each PR's review threads and reviewers from GitHub. The ticket's

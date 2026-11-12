@@ -16,7 +16,7 @@ import { reviewPrompt, stepInstructions, writeBrief } from './brief.js'
 import { contextSection, gatherContext } from './context.js'
 import { buildPreview } from './preview.js'
 import { filesTouched, passMetrics, settingsSummary, startPoint } from './replay.js'
-import { commentOnPr, editPrBody, existingPrUrl, fetchPrInfo, updateBranchOnGithub, ghLogin, livePrBody, markPrReady, prConversation, previewDeploy, pushBranch, replyToReviewComment, requestReviewers, requestSuggestedReviewers, resolveThread } from './github.js'
+import { type PrMedia, commentOnPr, editPrBody, existingPrUrl, fetchPrInfo, updateBranchOnGithub, ghLogin, livePrBody, markPrReady, prConversation, previewDeploy, pushBranch, replyToReviewComment, requestReviewers, requestSuggestedReviewers, resolveThread } from './github.js'
 import { claudeCommand, openTerminal } from './open-claude.js'
 import { addUpdateLine, PrPublisher } from './pr.js'
 import { checksPrompt, descPrompt, openChecks, readPatch, tickLines } from './pr-desc.js'
@@ -1034,6 +1034,11 @@ export class Runner {
   // Teammates' comments only (bots like Greptile and preview deploys have their own flow).
   // The comments you picked (all open ones from teammates when you pick none), each with your
   // optional note, go back to the lane. The rest stay open for later.
+  // screenshots for a comment on any PR, through mevo's signed-in GitHub browser
+  uploadToPr(prUrl: string, files: readonly string[]): Promise<readonly PrMedia[]> {
+    return this.pr.uploadFiles(prUrl, files)
+  }
+
   async addressComments(id: string, picks?: readonly { id: string; note?: string }[], quick = false): Promise<void> {
     const ticket = this.store.get(id)
     if (!ticket?.worktree || !ticket.pr) throw new Error(`${id}: no PR to address`)

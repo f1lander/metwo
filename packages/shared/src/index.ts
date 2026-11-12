@@ -544,6 +544,34 @@ export interface PrReview {
   readonly followUp?: ReviewFollowUp
   readonly error?: string
   readonly journal?: readonly JournalEntry[]
+  // what you are about to post, kept while you edit it (for the report written at reportAt)
+  readonly draft?: ReviewDraft
+  // the reviewer's session, so the chat continues it
+  readonly session?: string
+  // you and the reviewer, after the report: questions, and extra checks it ran
+  readonly chat?: readonly ReviewChatTurn[]
+  // testing the PR by hand, with the review's steps (same as a ticket's)
+  readonly testPlan?: TestPlan
+  readonly humanTests?: readonly HumanTestRun[]
+}
+
+export interface ReviewDraft {
+  readonly reportAt: string
+  readonly summary: string
+  readonly event: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE'
+  // per finding: posted or not, its text, and the review screenshots that go with it
+  readonly findings: Readonly<Record<string, { readonly on: boolean; readonly body: string; readonly shots?: readonly string[] }>>
+  // add your hand test (steps and results) to the review
+  readonly tested?: string | null
+}
+
+export interface ReviewChatTurn {
+  readonly at: string
+  readonly who: 'you' | 'mevo'
+  // ask: an answer, nothing run · check: it looked again and may have changed the report
+  readonly mode: 'ask' | 'check'
+  readonly text: string
+  readonly cost?: number
 }
 
 export type ThreadVerdict = 'addressed' | 'partly' | 'not_addressed' | 'answered'

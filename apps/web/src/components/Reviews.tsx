@@ -1,7 +1,7 @@
 import { ReviewFollowUpCard } from './FollowUp.js'
-import type { LiveLine, MediaFile, OpenPr, PrReview, ReviewDepth, ReviewFinding } from '@ticketflow/shared'
+import type { LiveLine, MediaFile, OpenPr, PrReview, ReviewDepth, ReviewDraft, ReviewFinding } from '@ticketflow/shared'
 import { motion } from 'motion/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadMedia, mediaUrl, reviewActions } from '../lib/api.js'
 import { href } from '../lib/route.js'
 import { LiveLog } from './Live.js'
@@ -9,6 +9,8 @@ import { Markdown } from './Markdown.js'
 import { Avatar, Button, ConfirmButton, Mono, Person, Pill, rise, stagger, timeAgo } from './ui.js'
 import { PrMetaCard } from './PrMeta.js'
 import { failed } from '../lib/notice.js'
+import { HandTestCard } from './HandTest.js'
+import { finishedRuns, ReviewChat, reviewTicket } from './ReviewExtras.js'
 
 type Tone = 'neutral' | 'ok' | 'warn' | 'bad' | 'accent'
 
@@ -320,6 +322,7 @@ export function ReviewView({ review: r, live }: { review: PrReview; live: readon
       </motion.div>
       <motion.div variants={stagger} initial="hidden" animate="show" className="flex min-h-0 flex-col gap-4 px-6 py-5 max-lg:min-h-[320px] max-lg:shrink-0 max-lg:border-t max-lg:border-line max-md:px-4">
         <LiveLog id={r.id} lines={live} running={r.status === 'reviewing'} className="flex-1" />
+        <ReviewChat review={r} />
       </motion.div>
     </div>
   )
@@ -331,25 +334,59 @@ const EVENTS = [
   { id: 'APPROVE', label: 'Approve' },
 ] as const
 
-// The report as an editable draft: tick what to post, reword it, pick the review type.
+// The report as an editable draft: tick what to post, reword it, attach screenshots, add your hand
+// test, pick the review type. The draft is saved as you type, so updates and reloads keep it.
+type Draft = Omit<ReviewDraft, 'reportAt'>
+const EVENT_TONE: Record<(typeof EVENTS)[number]['id'], { on: string; off: string }> = {
+  COMMENT: { on: 'bg-[#1d1b33] text-accent-fg', off: 'text-muted hover:text-accent-fg' },
+  REQUEST_CHANGES: { on: 'bg-[#2a1a1d] text-bad', off: 'text-muted hover:text-bad' },
+  APPROVE: { on: 'bg-[#13261c] text-ok', off: 'text-muted hover:text-ok' },
+}
+
 function Report({ review: r, busy, setBusy }: { review: PrReview; busy: boolean; setBusy: (b: boolean) => void }) {
   const rep = r.report as NonNullable<PrReview['report']>
-  const initial = useMemo(() => Object.fromEntries(rep.findings.map((f) => [f.id, { on: f.severity !== 'P3', body: f.body }])), [rep])
-  const [draft, setDraft] = useState<Record<string, { on: boolean; body: string }>>(initial)
-  const [summary, setSummary] = useState(rep.summary)
-  const [event, setEvent] = useState<(typeof EVENTS)[number]['id']>(rep.verdict === 'request_changes' ? 'REQUEST_CHANGES' : rep.verdict === 'approve' ? 'APPROVE' : 'COMMENT')
-  const [note, setNote] = useState<string | null>(null)
+  const fresh = (): Draft => ({
+    summary: rep.summary,
+    event: rep.verdict === 'request_changes' ? 'REQUEST_CHANGES' : rep.verdict === 'approve' ? 'APPROVE' : 'COMMENT',
+    findings: Object.fromEntries(rep.findings.map((f) => [f.id, { on: f.severity !== 'P3', body: f.body, shots: [] as string[] }])),
+    tested: null,
+  })
+  const [d, setD] = useState<Draft>(() => (r.draft && r.draft.reportAt === rep.at ? r.draft : fresh()))
+  const dirty = useRef(false)
+  const seenAt = useRef(rep.at)
+  // only a new report (a new review, or "check more") replaces the draft
   useEffect(() => {
-    setDraft(initial)
-    setSummary(rep.summary)
-  }, [initial, rep.summary])
-  const picked = rep.findings.filter((f) => draft[f.id]?.on)
+    if (rep.at === seenAt.current) return
+    seenAt.current = rep.at
+    dirty.current = false
+    setD(fresh())
+  }, [rep.at]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!dirty.current) return
+    const t = setTimeout(() => void reviewActions.draft(r.id, d).catch(() => undefined), 700)
+    return () => clearTimeout(t)
+  }, [d, r.id])
+  const edit = (fn: (d: Draft) => Draft) => {
+    dirty.current = true
+    setD(fn)
+  }
+  const [note, setNote] = useState<string | null>(null)
+  const [media, setMedia] = useState<readonly MediaFile[]>([])
+  useEffect(() => {
+    loadMedia(r.id)
+      .then((m) => setMedia(Array.isArray(m) ? m.filter((x) => !x.previous && x.kind === 'image' && !x.name.startsWith('human--')) : []))
+      .catch(() => setMedia([]))
+  }, [r.id, rep.at])
+  const picked = rep.findings.filter((f) => d.findings[f.id]?.on)
   const inline = picked.filter((f) => f.inline).length
+  const shots = picked.reduce((n, f) => n + (d.findings[f.id]?.shots?.length ?? 0), 0)
+  const runs = finishedRuns(r)
+  const tested = runs.find((x) => x.id === d.tested)
   const post = async () => {
     setBusy(true)
     setNote(null)
     try {
-      await reviewActions.post(r.id, { event, body: summary, findings: picked.map((f) => ({ id: f.id, body: draft[f.id]?.body ?? f.body })) })
+      await reviewActions.post(r.id, { event: d.event, body: d.summary, findings: picked.map((f) => ({ id: f.id, body: d.findings[f.id]?.body ?? f.body, shots: d.findings[f.id]?.shots ?? [] })), tested: tested?.id ?? null })
     } catch (err) {
       setNote(err instanceof Error ? err.message : String(err))
     } finally {
@@ -357,6 +394,7 @@ function Report({ review: r, busy, setBusy }: { review: PrReview; busy: boolean;
     }
   }
   const red = rep.gates.filter((g) => !g.ok)
+  const shotOf = (name: string | undefined) => (name ? media.find((m) => m.name === name || m.name.endsWith(name)) : undefined)
   return (
     <>
       <motion.section variants={rise} className="flex flex-col gap-2 rounded-lg border border-line bg-panel px-4 py-3">
@@ -379,16 +417,24 @@ function Report({ review: r, busy, setBusy }: { review: PrReview; busy: boolean;
           </pre>
         ))}
         {rep.checks.length > 0 && (
-          <ul className="flex flex-col gap-1 text-xs">
-            {rep.checks.map((c, i) => (
-              <li key={`${c.what}-${i}`} className="flex gap-2">
-                <span className={c.result === 'pass' ? 'text-ok' : c.result === 'fail' ? 'text-bad' : 'text-dim'}>{c.result === 'pass' ? '✓' : c.result === 'fail' ? '✕' : '–'}</span>
-                <span className="text-fg-2">
-                  {c.what}
-                  {c.note ? <span className="text-dim"> · {c.note}</span> : null}
-                </span>
-              </li>
-            ))}
+          <ul className="flex flex-col gap-1.5 text-xs">
+            {rep.checks.map((c, i) => {
+              const m = shotOf(c.shot)
+              return (
+                <li key={`${c.what}-${i}`} className="flex gap-2">
+                  <span className={c.result === 'pass' ? 'text-ok' : c.result === 'fail' ? 'text-bad' : 'text-dim'}>{c.result === 'pass' ? '✓' : c.result === 'fail' ? '✕' : '–'}</span>
+                  <span className="min-w-0 flex-1 text-fg-2">
+                    {c.what}
+                    {c.note ? <span className="text-dim"> · {c.note}</span> : null}
+                  </span>
+                  {m && (
+                    <a href={mediaUrl(r.id, m.name, m.at)} target="_blank" rel="noreferrer" className="shrink-0" title={m.name}>
+                      <img src={mediaUrl(r.id, m.name, m.at)} alt={m.name} loading="lazy" className="h-10 w-16 rounded border border-line object-cover object-top hover:border-line-2" />
+                    </a>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
       </motion.section>
@@ -411,6 +457,11 @@ function Report({ review: r, busy, setBusy }: { review: PrReview; busy: boolean;
           ))}
         </motion.section>
       )}
+      {rep.depth === 'full' && r.worktree && (
+        <motion.div variants={rise}>
+          <HandTestCard ticket={reviewTicket(r)} />
+        </motion.div>
+      )}
 
       <motion.section variants={rise} className="flex flex-col gap-2">
         <h2 className="text-xs font-medium text-muted">
@@ -418,7 +469,7 @@ function Report({ review: r, busy, setBusy }: { review: PrReview; busy: boolean;
         </h2>
         {rep.findings.length === 0 && <div className="rounded-lg border border-dashed border-line px-4 py-5 text-center text-xs text-dim">Nothing to flag.</div>}
         {rep.findings.map((f) => (
-          <Finding key={f.id} finding={f} value={draft[f.id] ?? { on: false, body: f.body }} onChange={(v) => setDraft((d) => ({ ...d, [f.id]: v }))} />
+          <Finding key={f.id} reviewId={r.id} media={media} finding={f} value={d.findings[f.id] ?? { on: false, body: f.body }} onChange={(v) => edit((x) => ({ ...x, findings: { ...x.findings, [f.id]: v } }))} />
         ))}
       </motion.section>
 
@@ -427,17 +478,33 @@ function Report({ review: r, busy, setBusy }: { review: PrReview; busy: boolean;
           <label htmlFor={`summary-${r.id}`} className="text-xs font-medium text-muted">
             Review comment
           </label>
-          <textarea id={`summary-${r.id}`} value={summary} onChange={(e) => setSummary(e.target.value)} rows={3} className="rounded-md border border-line-2 bg-bg px-2.5 py-2 text-xs leading-relaxed text-fg outline-none focus:border-accent max-md:text-[16px]" />
+          <textarea id={`summary-${r.id}`} value={d.summary} onChange={(e) => edit((x) => ({ ...x, summary: e.target.value }))} rows={4} className="rounded-md border border-line-2 bg-bg px-2.5 py-2 text-xs leading-relaxed text-fg outline-none focus:border-accent max-md:text-[16px]" />
+          {runs.length > 0 && (
+            <label className="flex flex-wrap items-center gap-2 text-xs text-muted">
+              <input type="checkbox" checked={Boolean(tested)} onChange={(e) => edit((x) => ({ ...x, tested: e.target.checked ? (runs[0]?.id ?? null) : null }))} className="accent-[var(--color-accent)]" />
+              Add my hand test to the review
+              {tested && runs.length > 1 && (
+                <select value={tested.id} onChange={(e) => edit((x) => ({ ...x, tested: e.target.value }))} className="rounded-md border border-line-2 bg-bg px-1.5 py-0.5 text-fg">
+                  {runs.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {timeAgo(x.endedAt ?? x.startedAt)} ago · {x.status} · {x.steps.filter((st) => st.status === 'done').length}/{x.steps.length}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {tested && <span className="text-dim">each step with ✅/❌, and the screenshots of up to 6 steps</span>}
+            </label>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex overflow-hidden rounded-md border border-line-2 text-xs" role="radiogroup" aria-label="review type">
               {EVENTS.map((e) => (
-                <button key={e.id} type="button" role="radio" aria-checked={event === e.id} onClick={() => setEvent(e.id)} className={`px-3 py-1 ${event === e.id ? 'bg-bg text-fg' : 'text-muted hover:text-fg'}`}>
+                <button key={e.id} type="button" role="radio" aria-checked={d.event === e.id} onClick={() => edit((x) => ({ ...x, event: e.id }))} className={`px-3 py-1 transition-colors ${d.event === e.id ? EVENT_TONE[e.id].on : EVENT_TONE[e.id].off}`}>
                   {e.label}
                 </button>
               ))}
             </div>
             <span className="text-[11px] text-dim">
-              {inline} inline · {picked.length - inline} in the body · as you, on GitHub
+              {inline} inline · {picked.length - inline} in the body{shots ? ` · ${shots} screenshot${shots === 1 ? '' : 's'}` : ''} · as you, on GitHub
             </span>
             <ConfirmButton variant="primary" className="ml-auto" label="Post review" confirm={`Post to #${r.number}`} disabled={busy} onConfirm={() => void post()} />
           </div>
@@ -448,7 +515,10 @@ function Report({ review: r, busy, setBusy }: { review: PrReview; busy: boolean;
   )
 }
 
-function Finding({ finding: f, value, onChange }: { finding: ReviewFinding; value: { on: boolean; body: string }; onChange: (v: { on: boolean; body: string }) => void }) {
+function Finding({ reviewId, media, finding: f, value, onChange }: { reviewId: string; media: readonly MediaFile[]; finding: ReviewFinding; value: { on: boolean; body: string; shots?: readonly string[] }; onChange: (v: { on: boolean; body: string; shots?: readonly string[] }) => void }) {
+  const [picking, setPicking] = useState(false)
+  const shots = value.shots ?? []
+  const toggle = (name: string) => onChange({ ...value, shots: shots.includes(name) ? shots.filter((x) => x !== name) : [...shots, name].slice(0, 6) })
   return (
     <div className={`flex flex-col gap-2 rounded-lg border px-3 py-2.5 transition-colors ${value.on ? 'border-line-2 bg-panel' : 'border-line bg-sunk opacity-70'}`}>
       <label className="flex cursor-pointer items-start gap-2 text-xs">
@@ -464,6 +534,30 @@ function Finding({ finding: f, value, onChange }: { finding: ReviewFinding; valu
       )}
       <textarea value={value.body} onChange={(e) => onChange({ ...value, body: e.target.value })} rows={Math.min(8, Math.max(2, Math.ceil(value.body.length / 90)))} disabled={!value.on} className="rounded-md border border-line bg-bg px-2.5 py-2 text-xs leading-relaxed text-fg-2 outline-none focus:border-accent disabled:opacity-60 max-md:text-[16px]" />
       {f.suggestion && <pre className="overflow-auto rounded-md bg-sunk p-2 font-mono text-[11px] text-ok">{f.suggestion}</pre>}
+      {value.on && media.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          {shots.map((name) => {
+            const m = media.find((x) => x.name === name)
+            return m ? (
+              <button key={name} type="button" onClick={() => toggle(name)} title={`${name} · click to remove`} className="rounded border border-accent/60">
+                <img src={mediaUrl(reviewId, m.name, m.at)} alt={name} className="h-10 w-16 rounded object-cover object-top" />
+              </button>
+            ) : null
+          })}
+          <button type="button" onClick={() => setPicking(!picking)} className="text-accent-fg hover:underline">
+            {picking ? 'done' : shots.length ? 'change screenshots' : '+ screenshot'}
+          </button>
+        </div>
+      )}
+      {value.on && picking && (
+        <div className="grid grid-cols-4 gap-1.5 max-sm:grid-cols-3">
+          {media.map((m) => (
+            <button key={m.name} type="button" onClick={() => toggle(m.name)} className={`overflow-hidden rounded border ${shots.includes(m.name) ? 'border-accent' : 'border-line hover:border-line-2'}`} title={m.name}>
+              <img src={mediaUrl(reviewId, m.name, m.at)} alt={m.name} loading="lazy" className="aspect-[16/10] w-full object-cover object-top" />
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

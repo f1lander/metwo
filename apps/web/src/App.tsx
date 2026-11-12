@@ -114,6 +114,7 @@ export function App() {
                   live={live}
                   me={health?.github.login ?? null}
                   requests={state?.requests ?? []}
+                  reviews={reviews}
                 />
                 <Activity tickets={tickets} />
               </>

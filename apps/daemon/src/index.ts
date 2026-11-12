@@ -49,6 +49,7 @@ import { ghLogin } from './runner/github.js'
 import { label as readinessLabel, ReadinessCheck } from './readiness.js'
 import { AndroidDevices } from './runner/android.js'
 import { HumanTests } from './runner/human-test.js'
+import { handStore } from './runner/hand-host.js'
 import { registerAssistant } from './telegram/assistant.js'
 
 const env = loadEnv()
@@ -220,7 +221,7 @@ reviews.pingAuthor = async (login, emails, name, text) => {
 }
 const phones = new AndroidDevices()
 phones.start()
-const humanTests = new HumanTests(() => runner.config, store, runner, phones)
+const humanTests = new HumanTests(() => runner.config, handStore(store), runner, phones)
 const readiness = new ReadinessCheck({ store, runner, dataDir: env.dataDir, issueView: (uuid) => linear.issueView(uuid) })
 const assistant = new Assistant({ store, runner, reviews, dataDir: env.dataDir, cycle: () => linear.cycleView?.() ?? Promise.resolve(NO_CYCLE), assign: (ids) => assignAndTrack(ids), autopilotStart: (id) => autopilotStart(id) })
 // The team's review knowledge: how each comment on your PRs ended (fixlog.ts).

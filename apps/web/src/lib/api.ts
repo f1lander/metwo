@@ -1,4 +1,4 @@
-import type { ChangeRequest, LinearSyncRow, MascotStatus, SlackChannel, AskReply, Nudge, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, OpenPr, ReviewDepth, CiDiagnosis, FindScope, FoundIssue, LinearProject, EngineSetupStatus, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrinciplesUpdate, PrReview, HumanTestRun, PrView, Readiness, LiveLine, TestPlan, TestStep, ServerEvent, Settings, SettingsView, PipelineView, PromptPreview, ReplayView, StepId, VisualPlanView, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
+import type { ChangeRequest, ReviewDraft, LinearSyncRow, MascotStatus, SlackChannel, AskReply, Nudge, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, OpenPr, ReviewDepth, CiDiagnosis, FindScope, FoundIssue, LinearProject, EngineSetupStatus, CycleView, TodayItem, DaemonState, Effort, Health, LearningProposal, LinearIssueView, MediaFile, PrinciplesUpdate, PrReview, HumanTestRun, PrView, Readiness, LiveLine, TestPlan, TestStep, ServerEvent, Settings, SettingsView, PipelineView, PromptPreview, ReplayView, StepId, VisualPlanView, StartChoice, Ticket, TicketDiff } from '@ticketflow/shared'
 import { useCallback, useEffect, useState } from 'react'
 import { setLabelColors } from './labels.js'
 import { setTriage } from './triage.js'
@@ -408,7 +408,9 @@ export const reviewActions = {
   pick: (number: number, depth: ReviewDepth) => post<{ review: PrReview }>('/api/reviews/pick', { number, depth }),
   stop: (id: string) => post(`/api/reviews/${id}/stop`),
   dismiss: (id: string) => post(`/api/reviews/${id}/dismiss`),
-  post: (id: string, input: { event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'; body: string; findings: { id: string; body: string }[] }) => post<{ review: PrReview }>(`/api/reviews/${id}/post`, input),
+  post: (id: string, input: { event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'; body: string; findings: { id: string; body: string; shots?: readonly string[] }[]; tested?: string | null }) => post<{ review: PrReview }>(`/api/reviews/${id}/post`, input),
+  draft: (id: string, draft: Omit<ReviewDraft, 'reportAt'>) => post<{ review: PrReview }>(`/api/reviews/${id}/draft`, draft),
+  chat: (id: string, text: string, mode: 'ask' | 'check') => post(`/api/reviews/${id}/chat`, { text, mode }),
   followUp: (id: string) => post<{ review: PrReview }>(`/api/reviews/${id}/followup`),
   checkFollowUp: (id: string) => post<{ review: PrReview }>(`/api/reviews/${id}/followup/check`),
   resolveThread: (id: string, thread: string) => post<{ review: PrReview }>(`/api/reviews/${id}/threads/${encodeURIComponent(thread)}/resolve`),

@@ -8,7 +8,7 @@ import { canFinishChecks } from '@ticketflow/shared'
 import type { EngineSetup } from './engine-setup.js'
 import type { Sessions } from './sessions.js'
 import { STEP_CONTEXT, type StepId } from '@ticketflow/shared'
-import type { ChangeRequest, AskReply, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, CycleView, FindScope, FoundIssue, LinearProject, Health, LearningProposal, LinearIssueView, PrinciplesUpdate, PrReview, HumanTestMode, HumanTestRun, PrView, Readiness, ServerEvent, TestPlan, Settings, SettingsView, PipelineView, StartChoice, Ticket, TicketDiff, TodayItem, Triage, NightShiftState, LinearSyncRow, MascotStatus, SlackChannel } from '@ticketflow/shared'
+import type { ChangeRequest, ReviewDraft, AskReply, AssistAction, BranchUpdateResult, CommentTriage, FixLogView, SlackMention, Leaderboard, PrMeta, CycleView, FindScope, FoundIssue, LinearProject, Health, LearningProposal, LinearIssueView, PrinciplesUpdate, PrReview, HumanTestMode, HumanTestRun, PrView, Readiness, ServerEvent, TestPlan, Settings, SettingsView, PipelineView, StartChoice, Ticket, TicketDiff, TodayItem, Triage, NightShiftState, LinearSyncRow, MascotStatus, SlackChannel } from '@ticketflow/shared'
 import { githubAvatar } from './avatars.js'
 import { knowledgeDir } from './config.js'
 import { Hono, type MiddlewareHandler } from 'hono'
@@ -1014,9 +1014,24 @@ export function startServer(port: number, host: string, rootDir: string, store: 
     return c.json({ ok: true })
   })
   app.post('/api/reviews/:id/post', async (c) => {
-    const input = (await c.req.json()) as { event?: string; body?: string; findings?: { id: string; body: string }[] }
+    const input = (await c.req.json()) as { event?: string; body?: string; findings?: { id: string; body: string; shots?: unknown }[]; tested?: unknown }
     const event = (['APPROVE', 'REQUEST_CHANGES', 'COMMENT'].includes(input.event ?? '') ? input.event : 'COMMENT') as ReviewEvent
-    return c.json({ ok: true, review: await reviews.post(c.req.param('id'), { event, body: input.body ?? '', findings: input.findings ?? [] }) })
+    const findings = (input.findings ?? []).map((f) => ({ id: String(f.id), body: String(f.body ?? ''), shots: Array.isArray(f.shots) ? f.shots.filter((x): x is string => typeof x === 'string').slice(0, 6) : [] }))
+    return c.json({ ok: true, review: await reviews.post(c.req.param('id'), { event, body: input.body ?? '', findings, tested: typeof input.tested === 'string' ? input.tested : null }) })
+  })
+  app.post('/api/reviews/:id/draft', async (c) => {
+    const d = (await c.req.json()) as Partial<ReviewDraft>
+    if (typeof d.summary !== 'string' || !d.findings || typeof d.findings !== 'object') return c.json({ ok: false, error: 'draft: { summary, event, findings }' }, 400)
+    const event = d.event === 'APPROVE' || d.event === 'REQUEST_CHANGES' ? d.event : 'COMMENT'
+    return c.json({ ok: true, review: reviews.saveDraft(c.req.param('id'), { reportAt: '', summary: d.summary.slice(0, 20_000), event, findings: d.findings, tested: typeof d.tested === 'string' ? d.tested : null }) })
+  })
+  app.post('/api/reviews/:id/chat', async (c) => {
+    const { text, mode } = (await c.req.json()) as { text?: unknown; mode?: unknown }
+    if (typeof text !== 'string' || !text.trim()) return c.json({ ok: false, error: 'empty message' }, 400)
+    const id = c.req.param('id')
+    if (reviews.activeId && reviews.activeId !== id) return c.json({ ok: false, error: `${reviews.activeId} is being reviewed; ask when it ends` }, 409)
+    background(`${id}: review chat`, reviews.chat(id, text.trim(), mode === 'check' ? 'check' : 'ask'))
+    return c.json({ ok: true })
   })
 
   app.get('/api/events', (c) =>

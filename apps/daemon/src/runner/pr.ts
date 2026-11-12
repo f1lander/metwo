@@ -81,6 +81,16 @@ export class PrPublisher {
   // Opens the draft, then attaches screenshots and videos. Browser mode needs the PR page to
   // exist, so the body goes up with a marker and is edited once the media links are back.
   // Browser upload first, secret gist for images as the fallback; null when nothing could go up.
+  // files into GitHub's own uploader on any PR (a review you post on a teammate's PR)
+  async uploadFiles(prUrl: string, files: readonly string[]): Promise<readonly PrMedia[]> {
+    if (!files.length) return []
+    const browser = this.browser()
+    if (!browser) throw new Error("mevo's GitHub browser is not signed in (Health → Sign in); screenshots need it")
+    const attached = await browser.upload(prUrl, [...files])
+    this.notify.uploads(true, `last upload ${attached.length} file(s) on ${prUrl}`)
+    return attached
+  }
+
   async uploadMedia(ticket: Ticket, prUrl: string, media: readonly { file: string; kind: 'image' | 'video' }[]): Promise<{ attached: readonly PrMedia[] | null; how: string }> {
     const id = ticket.id
     if (media.length === 0 || this.cfg.github.screenshots === 'none') return { attached: null, how: '' }

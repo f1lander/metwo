@@ -1,4 +1,4 @@
-import { type ChangeRequest, fmtMinutes, type LiveLine, openComments, openRequests, prChecks, type Ticket, usd } from '@ticketflow/shared'
+import { type PrReview, type ChangeRequest, fmtMinutes, type LiveLine, openComments, openRequests, prChecks, type Ticket, usd } from '@ticketflow/shared'
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { actions, type LiveMap } from '../lib/api.js'
@@ -16,6 +16,7 @@ import { openCycle } from './Cycle.js'
 import { NudgeAll } from './Nudge.js'
 import { ReadyButton, SizeChip } from './Ready.js'
 import { failed, notice } from '../lib/notice.js'
+import { ReviewBoardCard, reviewsOnBoard } from './ReviewExtras.js'
 import { RequestCounts, requestCounts, RequestsColumn, useRequestCount } from './Requests.js'
 
 const CARD_SPRING = { type: 'spring', stiffness: 340, damping: 32, mass: 0.8 } as const
@@ -206,7 +207,10 @@ function Chip({ on, onClick, hidden = false, children }: { on: boolean; onClick:
   )
 }
 
-export function Board({ tickets: all, live, me, requests = [] }: { tickets: readonly Ticket[]; live: LiveMap; me?: string | null; requests?: readonly ChangeRequest[] }) {
+export function Board({ tickets: all, live, me, requests = [], reviews = [] }: { tickets: readonly Ticket[]; live: LiveMap; me?: string | null; requests?: readonly ChangeRequest[]; reviews?: readonly PrReview[] }) {
+  // reviews of teammates' PRs: working while the reviewer runs, needs you when the report waits
+  const onBoard = reviewsOnBoard(reviews)
+  const extra = (title: string) => (title === 'Working' ? onBoard.working : title === 'Needs me' ? onBoard.ready : [])
   const [filter, setFilter] = useState<Filter>(readFilter)
   const set = (f: Filter) => {
     setFilter(f)
@@ -302,7 +306,7 @@ export function Board({ tickets: all, live, me, requests = [] }: { tickets: read
                   <span className={`relative size-2 rounded-full ${col.dot}`} aria-hidden="true" />
                 </span>
                 {col.title}
-                <Count value={col.items.length} className="text-dim" />
+                <Count value={col.items.length + extra(col.title).length} className="text-dim" />
                 {col.match && me && <UpdateAll tickets={col.items.filter((t) => t.pr?.author?.toLowerCase() === me.toLowerCase())} />}
                 {col.title === 'In review' && <NudgeAll tickets={col.items} />}
               </h2>
@@ -310,8 +314,11 @@ export function Board({ tickets: all, live, me, requests = [] }: { tickets: read
               <motion.div layout layoutScroll layoutDependency={col.items.map((t) => t.id).join()} className="-mx-1 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain px-1 pt-4 pb-4 max-md:pb-24 md:pt-0">
                 <AnimatePresence mode="popLayout" initial={false}>
                   {col.items.map((t) => (col.title === 'Closed' ? <ClosedRow key={t.id} ticket={t} /> : <TicketCard key={t.id} ticket={t} last={live[t.id]?.at(-1)} />))}
+                  {extra(col.title).map((r) => (
+                    <ReviewBoardCard key={r.id} review={r} last={live[r.id]?.at(-1)?.text} />
+                  ))}
                 </AnimatePresence>
-                {col.items.length === 0 && (
+                {col.items.length === 0 && extra(col.title).length === 0 && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rounded-lg border border-dashed border-line px-3 py-6 text-center text-xs text-dim">
                     {col.title === 'Needs me' ? 'Nothing waiting on you' : 'Empty'}
                     {col.title === 'Assigned' && (
