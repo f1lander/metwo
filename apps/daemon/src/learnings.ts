@@ -126,7 +126,7 @@ Write [] if nothing qualifies. Do not edit any other file.`
 
   private appendRule(p: LearningProposal): void {
     mkdirSync(this.dir, { recursive: true })
-    let rules = this.rules() || '# Team learnings\n\nApproved in metwo from PR feedback. Every brief includes this file; the team wiki and the repo rules still win.\n'
+    let rules = this.rules() || '# Team learnings\n\nApproved in mevo from PR feedback. Every brief includes this file; the team wiki and the repo rules still win.\n'
     const heading = `## ${p.area}`
     const line = `- ${p.rule}${p.sources.length ? ` (${p.sources.join(', ')})` : ''}`
     rules = rules.includes(`\n${heading}\n`) ? rules.replace(`\n${heading}\n`, `\n${heading}\n${line}\n`) : `${rules.trimEnd()}\n\n${heading}\n${line}\n`

@@ -34,6 +34,20 @@ export function wireReviews(tg: Telegram): void {
     tg.reviews?.start(id).catch((e: unknown) => tg.sendPlain(`${id}: ${e instanceof Error ? e.message : String(e)}`))
   })
 
+  tg.bot.callbackQuery(/^rvfollow:(.+)$/, async (ctx) => {
+    const id = ctx.match[1] ?? ''
+    await ctx.answerCallbackQuery({ text: `${id}: checking your comments` })
+    await ctx.editMessageReplyMarkup()
+    try {
+      const r = await tg.reviews?.checkFollowUp(id)
+      const open = (r?.followUp?.threads ?? []).filter((t) => !t.resolved)
+      const icon = { addressed: '✅', partly: '🟡', not_addressed: '❌', answered: '💬' } as const
+      await tg.sendPlain(`#${r?.number} ${r?.followUp?.checked?.summary ?? ''}\n${open.map((t) => `${t.verdict ? icon[t.verdict] : '·'} ${t.path ?? ''}${t.line ? `:${t.line}` : ''} ${t.note ?? ''}`).join('\n')}\nOpen it in the app to resolve, reply, approve or ping on Slack.`)
+    } catch (e) {
+      await tg.sendPlain(`${id}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  })
+
   tg.bot.callbackQuery(/^rvdismiss:(.+)$/, async (ctx) => {
     tg.reviews?.dismiss(ctx.match[1] ?? '')
     await ctx.answerCallbackQuery({ text: 'dismissed' })

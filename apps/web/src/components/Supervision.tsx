@@ -4,7 +4,7 @@ import { Pill, rise, Section } from './ui.js'
 
 const TONE = { pass: 'ok', concerns: 'warn', fail: 'bad' } as const
 
-// The second engine's check: verdict, criteria with their evidence, findings, and the gates metwo re-ran.
+// The second engine's check: verdict, criteria with their evidence, findings, and the gates mevo re-ran.
 export function Supervision({ report: r }: { report: SupervisionReport }) {
   const met = r.criteria.filter((c) => c.met).length
   return (
@@ -38,8 +38,18 @@ export function Supervision({ report: r }: { report: SupervisionReport }) {
           <ul className="flex flex-col gap-1 border-t border-line pt-2">
             {r.findings.map((f, i) => (
               <li key={`${f.note}-${i}`} className="text-xs text-fg-2">
-                <span className={`font-mono text-[11px] font-semibold ${f.severity === 'P1' ? 'text-bad' : 'text-warn'}`}>{f.severity}</span> {f.file && <span className="font-mono text-[11px] text-muted">{f.file} </span>}
+                <span className={`font-mono text-[11px] font-semibold ${f.severity === 'P1' ? 'text-bad' : 'text-warn'}`}>{f.severity}</span> {f.unproven && <span className="rounded bg-raised px-1 text-[10px] text-dim" title="the supervisor flagged it as P1/P2 but did not prove it with a run">unproven</span>} {f.file && <span className="font-mono text-[11px] text-muted">{f.file} </span>}
                 {f.note}
+                {f.proof && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-[11px] text-muted">proved by a run</summary>
+                    <pre className="mt-1 overflow-x-auto rounded-md border border-line bg-sunk px-2 py-1.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-fg-2">
+                      $ {f.proof.command}
+                      {'\n'}
+                      {f.proof.output}
+                    </pre>
+                  </details>
+                )}
               </li>
             ))}
           </ul>
@@ -50,7 +60,7 @@ export function Supervision({ report: r }: { report: SupervisionReport }) {
               {g.ok ? '✓' : '✕'} {g.name}
             </span>
           ))}
-          <span className="text-[11px] text-dim">re-run by metwo</span>
+          <span className="text-[11px] text-dim">re-run by mevo</span>
         </div>
       </motion.div>
     </Section>

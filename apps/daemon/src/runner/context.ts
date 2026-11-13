@@ -1,7 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Ticket } from '@ticketflow/shared'
-import type { Linear, LinearComment } from '../linear.js'
+import type { LinearComment } from '../linear.js'
+import type { Tracker } from '../tracker.js'
 import { log } from '../log.js'
 
 export interface TicketContext {
@@ -22,7 +23,7 @@ const EXT: Record<string, string> = {
   'image/svg+xml': 'svg',
 }
 
-function imageUrls(...texts: readonly string[]): readonly string[] {
+export function imageUrls(...texts: readonly string[]): readonly string[] {
   const found = new Set<string>()
   for (const text of texts) {
     for (const m of text.matchAll(IMAGE_MD)) if (m[1]) found.add(m[1])
@@ -33,7 +34,7 @@ function imageUrls(...texts: readonly string[]): readonly string[] {
 
 // Screenshots and mockups in the ticket are often the real spec; give them to the lane.
 // Best effort: a failed download never blocks the lane.
-export async function gatherContext(linear: Linear, ticket: Ticket, flowDir: string): Promise<TicketContext> {
+export async function gatherContext(linear: Tracker, ticket: Ticket, flowDir: string): Promise<TicketContext> {
   let comments: readonly LinearComment[] = []
   try {
     comments = await linear.humanComments(ticket.uuid)

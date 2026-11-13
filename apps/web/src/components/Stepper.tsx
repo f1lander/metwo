@@ -27,10 +27,9 @@ function noteFor(t: Ticket, i: number, at: number, now: number): StepNote | null
   }
   if (i > at) return null
   if (i === 1) {
-    const first = t.events.find((e) => e.kind === 'start')
-    const ready = [...t.events].reverse().find((e) => e.kind === 'ready' || e.kind === 'no-change')
-    if (first && ready && ready.at > first.at) return { text: fmtMinutes((new Date(ready.at).getTime() - new Date(first.at).getTime()) / 60000), tone: 'muted' }
-    return null
+    // time the lanes actually ran, not the days the ticket sat waiting in between
+    const minutes = (t.journal ?? []).filter((j) => j.kind === 'run').reduce((n, j) => n + (Number(j.meta?.minutes) || 0), 0)
+    return minutes > 0 ? { text: `${fmtMinutes(minutes)} of lane time`, tone: 'muted' } : null
   }
   if (i === 2) return reviewed ? { text: '✓ done', tone: 'ok' } : null
   if (i === 3) {
@@ -108,7 +107,7 @@ export function Stepper({ ticket: t }: { ticket: Ticket }) {
                 </span>
                 <span className={`max-w-full truncate text-center transition-colors duration-500 ${current ? (stuck ? 'font-medium text-warn' : 'font-medium text-fg') : done ? 'text-muted' : 'text-dim'}`}>{label}</span>
                 {note && (
-                  <span title={note.text} className={`max-w-full truncate text-center text-[10.5px] ${note.tone ? NOTE_TONE[note.tone] : current ? 'text-accent-fg' : 'text-muted'}`}>
+                  <span title={note.text} className={`line-clamp-2 max-w-full text-center text-[10.5px] leading-tight break-words ${note.tone ? NOTE_TONE[note.tone] : current ? 'text-accent-fg' : 'text-muted'}`}>
                     {note.text}
                   </span>
                 )}

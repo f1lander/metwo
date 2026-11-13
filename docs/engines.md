@@ -1,7 +1,7 @@
 # Engines: Claude, Codex, Cursor, OpenCode, Hermes
 
-metwo runs every role on Claude Code until you turn other engines on. Each engine is a CLI on
-this Mac, signed in with your own account; metwo drives it headless inside the ticket's
+mevo runs every role on Claude Code until you turn other engines on. Each engine is a CLI on
+this Mac, signed in with your own account; mevo drives it headless inside the ticket's
 worktree, with the same brief and the same contract (commits, `ARM-SUMMARY.md`, `PR-BODY.md`,
 `VISUAL.json`, screenshots).
 
@@ -60,7 +60,7 @@ opencode models               # ids are provider/model; pick one for the config
   (`openrouter/qwen/qwen3-coder:free`). Free models are slower and rate limited; give them lite work.
 - A plan you already have (GitHub Copilot, ChatGPT) works through its provider, so it costs
   nothing extra.
-- metwo runs it with every permission allowed (`OPENCODE_PERMISSION`), like the other engines.
+- mevo runs it with every permission allowed (`OPENCODE_PERMISSION`), like the other engines.
 
 Playwright in `~/.config/opencode/opencode.json`:
 
@@ -89,7 +89,7 @@ mcp_servers:
     args: ["-y", "@playwright/mcp@latest"]
 ```
 
-Hermes keeps its own memory and skills in `~/.hermes`. metwo only uses what Hermes writes to the
+Hermes keeps its own memory and skills in `~/.hermes`. mevo only uses what Hermes writes to the
 ticket's files, so nothing it learns there changes a lane by itself.
 
 ## 5. Turn them on
@@ -118,7 +118,7 @@ An empty `model` uses the CLI's own default. A role can name a model: `"codex:gp
 `"cursor:sonnet-4.5"`, `"opencode:opencode/grok-code"`, `"hermes:openai-api:gpt-5"`.
 
 Turn it on in Settings → Engines (or set it in the config and restart). It shows each engine, its version, sign-in and roles; **Test**
-runs a tiny prompt through it and tells you whether metwo could read the answer.
+runs a tiny prompt through it and tells you whether mevo could read the answer.
 
 ## 6. Spend your plans before your budget
 
@@ -143,8 +143,11 @@ Hermes). The supervisor stays on another vendor, so plan-engine work still gets 
 
 - Start a ticket on a specific engine: the "on" picker next to Start (app), the extra ⚡ buttons
   on the Telegram message, or `/start WEB-123 lite codex`.
-- Supervisor rounds: if the check comes back with concerns or failing gates, the implementer gets
-  the findings and tries again, up to `supervisorRounds`; then it lands in review with the verdict.
+- Supervisor rounds: if the gates fail or the check has a proven P1 or P2, the implementer gets the
+  findings and tries again, up to `supervisorRounds`; then it lands in review with the verdict.
+  Unmet criteria and P3 notes alone go straight to review.
+- Readiness check: `readiness.engine` ("auto" picks OpenCode when enabled, else `claude:haiku`)
+  reads each new ticket with no tools before it starts.
 - Learnings: Learnings page (or `/learn`, `/learnings` in Telegram). Approved rules go to
   `learnings/rules.md`; commit it like any other file.
 
@@ -154,4 +157,4 @@ Hermes). The supervisor stays on another vendor, so plan-engine work still gets 
   dollars only where the CLI reports a cost. Each plan has its own usage limits.
 - Codex runs with `--sandbox danger-full-access` and Cursor with `--force`, the same trust level
   Claude lanes already have (`bypassPermissions`): they need installs, the dev server and the
-  browser. Keep metwo on a machine you are fine giving that access.
+  browser. Keep mevo on a machine you are fine giving that access.

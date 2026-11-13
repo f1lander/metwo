@@ -3,13 +3,15 @@ import type { Engine, RunOptions, RunResult } from './types.js'
 
 const TOOL_NAMES: Record<string, string> = { readToolCall: 'Read', writeToolCall: 'Write', editToolCall: 'Edit', shellToolCall: 'Bash', grepToolCall: 'Grep', globToolCall: 'Glob', lsToolCall: 'LS' }
 
-// Cursor Agent CLI: `agent -p --output-format stream-json --force --trust`. It runs in metwo's
+// Cursor Agent CLI: `agent -p --output-format stream-json --force --trust`. It runs in mevo's
 // worktree; its own --worktree flag is not used. No effort setting.
 export const cursor: Engine = {
   id: 'cursor',
   label: 'Cursor',
+  readOnly: true,
   async run(opts: RunOptions): Promise<RunResult> {
-    const args = ['-p', '--output-format', 'stream-json', '--force', '--trust', '--approve-mcps']
+    // read-only: no --force, so shell commands and writes are not auto-approved; no repo MCP servers
+    const args = ['-p', '--output-format', 'stream-json', '--trust', ...(opts.readOnly ? [] : ['--force', '--approve-mcps'])]
     if (opts.model) args.push('--model', opts.model)
     if (opts.resume) args.push('--resume', opts.resume)
     args.push(opts.prompt)

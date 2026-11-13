@@ -7,18 +7,23 @@ import { log } from '../log.js'
 import type { Store } from '../store.js'
 import { buildPrBody, commentOnPr, editPrBody, livePrBody, mediaBlock, openDraftPr, prettyShot, type PrMedia, replyToReviewComment } from './github.js'
 import { applyChanges } from './pr-desc.js'
-import { listMedia, uploadShots } from './shots.js'
+import { listMedia, prMedia, uploadShots } from './shots.js'
 
 // Everything that puts a ticket's work on its PR: the body, screenshots and videos, and the
 // update comment after each push.
 export class PrPublisher {
   constructor(
-    private readonly cfg: Config,
+    private readonly config: () => Config,
     private readonly store: Store,
     private readonly flowDir: (id: string) => string,
     private readonly notify: { readonly uploads: (ok: boolean, detail: string) => void },
     private readonly browser: () => GithubBrowser | null,
   ) {}
+
+  // the config with Settings on top
+  private get cfg(): Config {
+    return this.config()
+  }
 
   laneBody(id: string): string | null {
     const bodyFile = path.join(this.flowDir(id), 'PR-BODY.md')
@@ -30,6 +35,11 @@ export class PrPublisher {
     const safe = path.basename(name)
     const hit = listMedia(this.flowDir(id)).find((m) => path.basename(m.file) === safe)
     if (hit) return hit.file
+    // what the page showed when a visual plan step failed, asked for as run--<name>
+    if (safe.startsWith('run--')) {
+      const run = path.join(this.flowDir(id), 'visual-run', 'after', safe.slice(5))
+      return existsSync(run) ? run : null
+    }
     // the previous visual run's shots, asked for as prev--<name>
     if (safe.startsWith('prev--')) {
       const prev = path.join(this.flowDir(id), 'shots-prev', safe.slice(6))
@@ -63,7 +73,7 @@ export class PrPublisher {
   previewBody(id: string): { body: string; media: readonly { name: string; kind: 'image' | 'video' }[] } {
     const ticket = this.store.get(id)
     if (!ticket) throw new Error(`unknown ticket ${id}`)
-    const media = listMedia(this.flowDir(id)).map((m) => ({ name: path.basename(m.file), kind: m.kind }))
+    const media = prMedia(this.flowDir(id), this.cfg.shots).map((m) => ({ name: path.basename(m.file), kind: m.kind }))
     const body = buildPrBody(ticket, ticket.summary ?? '', this.laneBody(id), media.map((m) => ({ ...m, url: `metwo-local:${m.name}` })))
     return { body, media }
   }
@@ -71,6 +81,16 @@ export class PrPublisher {
   // Opens the draft, then attaches screenshots and videos. Browser mode needs the PR page to
   // exist, so the body goes up with a marker and is edited once the media links are back.
   // Browser upload first, secret gist for images as the fallback; null when nothing could go up.
+  // files into GitHub's own uploader on any PR (a review you post on a teammate's PR)
+  async uploadFiles(prUrl: string, files: readonly string[]): Promise<readonly PrMedia[]> {
+    if (!files.length) return []
+    const browser = this.browser()
+    if (!browser) throw new Error("mevo's GitHub browser is not signed in (Health → Sign in); screenshots need it")
+    const attached = await browser.upload(prUrl, [...files])
+    this.notify.uploads(true, `last upload ${attached.length} file(s) on ${prUrl}`)
+    return attached
+  }
+
   async uploadMedia(ticket: Ticket, prUrl: string, media: readonly { file: string; kind: 'image' | 'video' }[]): Promise<{ attached: readonly PrMedia[] | null; how: string }> {
     const id = ticket.id
     if (media.length === 0 || this.cfg.github.screenshots === 'none') return { attached: null, how: '' }
@@ -108,7 +128,7 @@ export class PrPublisher {
     const number = ticket.pr?.number ?? Number(/\/pull\/(\d+)/.exec(prUrl ?? '')?.[1])
     if (!prUrl || !number) return null
     const since = visual?.since ?? Date.parse(ticket.lastPushAt ?? (ticket.journal ?? []).filter((j) => j.kind === 'pr').at(-1)?.at ?? '1970-01-01')
-    const fresh = listMedia(this.flowDir(id)).filter((m) => statSync(m.file).mtimeMs > since)
+    const fresh = prMedia(this.flowDir(id), this.cfg.shots).filter((m) => statSync(m.file).mtimeMs > since)
     const updateFile = path.join(this.flowDir(id), 'UPDATE.md')
     const what = visual ? visual.text : existsSync(updateFile) ? readFileSync(updateFile, 'utf8').trim() : ''
     const replies = visual ? [] : (ticket.pendingReplies ?? [])
@@ -157,7 +177,7 @@ export class PrPublisher {
     const prUrl = ticket.prUrl
     const number = ticket.pr?.number ?? Number(/\/pull\/(\d+)/.exec(prUrl ?? '')?.[1])
     if (!prUrl || !number) throw new Error(`${id} has no PR`)
-    const fresh = listMedia(this.flowDir(id)).filter((m) => statSync(m.file).mtimeMs > input.since)
+    const fresh = prMedia(this.flowDir(id), this.cfg.shots).filter((m) => statSync(m.file).mtimeMs > input.since)
     const { attached } = fresh.length ? await this.uploadMedia(ticket, prUrl, fresh) : { attached: [] as PrMedia[] }
     const live = await livePrBody(worktree, String(number))
     const changed = applyChanges(live.body, input.changes)
@@ -166,7 +186,7 @@ export class PrPublisher {
     const stamp = new Date().toLocaleString('sv-SE', { hour12: false }).slice(0, 16)
     const newShots = swapped.unmatched.length ? `\n\n**Retaken after \`${short}\`**\n\n${mediaBlock(swapped.unmatched)}` : ''
     let body = swapped.unmatched.length && /^## Screenshots/m.test(swapped.body)
-      ? swapped.body.replace(/(^## Screenshots[^\n]*\n)([\s\S]*?)(?=\n## |\n*Ref: |(?![\s\S]))/m, (_m, h: string, rest: string) => `${h}${rest.trimEnd()}${newShots}\n`)
+      ? swapped.body.replace(/(^## Screenshots[^\n]*\n)([\s\S]*?)(?=\n## |\n*(?:Ref:|Fixes) [A-Z]|(?![\s\S]))/m, (_m, h: string, rest: string) => `${h}${rest.trimEnd()}${newShots}\n`)
       : swapped.body
     let commentUrl: string | null = null
     if (input.comment) {
@@ -201,7 +221,7 @@ export class PrPublisher {
     const worktree = ticket.worktree as string
     const summary = ticket.summary ?? ''
     const laneBody = this.laneBody(id)
-    const media = listMedia(this.flowDir(id))
+    const media = prMedia(this.flowDir(id), this.cfg.shots)
     const mode = this.cfg.github.screenshots
 
     if (media.length === 0 || mode === 'none') {
@@ -226,15 +246,17 @@ function swapImages(body: string, attached: readonly PrMedia[]): { body: string;
   const unmatched: PrMedia[] = []
   for (const m of attached) {
     const alt = prettyShot(m.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const linked = new RegExp(`<a href="[^"]+"><img src="[^"]+"(\\s+width="\\d+"\\s+alt="${alt}")>`, 'g')
     const re = new RegExp(`<img src="[^"]+"(\\s+width="\\d+"\\s+alt="${alt}")`, 'g')
-    if (re.test(out)) out = out.replace(re, `<img src="${m.url}"$1`)
+    if (linked.test(out)) out = out.replace(linked, `<a href="${m.url}"><img src="${m.url}"$1>`)
+    else if (re.test(out)) out = out.replace(re, `<img src="${m.url}"$1`)
     else unmatched.push(m)
   }
   return { body: out, unmatched }
 }
 
-function addUpdateLine(body: string, line: string): string {
+export function addUpdateLine(body: string, line: string): string {
   if (body.includes('## Updates')) return body.replace(/## Updates\n/, `## Updates\n${line}\n`)
-  const withRef = body.replace(/\n*(Ref: [A-Z]+-\d+)\s*$/, `\n\n## Updates\n${line}\n\n$1`)
+  const withRef = body.replace(/\n*((?:Ref:|Fixes) [A-Z]+-\d+)\s*$/, `\n\n## Updates\n${line}\n\n$1`)
   return withRef !== body ? withRef : `${body.trimEnd()}\n\n## Updates\n${line}\n`
 }

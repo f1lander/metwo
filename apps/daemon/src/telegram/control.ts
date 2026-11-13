@@ -3,7 +3,7 @@ import { computeDigest, formatDigest } from '../digest.js'
 import { COMMANDS, normalizeId } from './format.js'
 import type { Telegram } from './index.js'
 
-// Running metwo itself: stop and resume, update from main, pause, effort, lanes, health, cycle, learnings.
+// Running mevo itself: stop and resume, update from main, pause, effort, lanes, health, cycle, learnings.
 export function wireControl(tg: Telegram): void {
   tg.bot.command('stop', async (ctx) => {
     const id = normalizeId(ctx.match)
@@ -32,7 +32,7 @@ export function wireControl(tg: Telegram): void {
     await ctx.answerCallbackQuery({ text: `stopping ${id}…` })
     await ctx.editMessageReplyMarkup()
     await tg.runner.stop(id).then(
-      () => tg.sendPlain(`⏹ ${id} stopped. Where it was is in RESUME.md; /resume ${id} continues it.`),
+      () => tg.sendPlain(`⏹ ${id} stopped. Where it was is in RESUME.md; /resume ${id} continues it, /resume ${id} codex (or claude:sonnet…) on another engine, add fresh to start over.`),
       (e: unknown) => tg.sendPlain(`could not stop ${id}: ${e instanceof Error ? e.message : String(e)}`),
     )
   })
@@ -118,8 +118,12 @@ export function wireControl(tg: Telegram): void {
         await ctx.reply(t ? `${id} is ${t.status.replace('_', ' ')}, not stopped` : `unknown ticket ${id}`)
         return
       }
-      await ctx.reply(`▶ ${id}: resuming`)
-      tg.runner.resume(id).catch((e: unknown) => tg.sendPlain(`${id}: ${e instanceof Error ? e.message : String(e)}`))
+      // /resume WEB-123 codex · /resume WEB-123 claude:sonnet fresh
+      const [, engine, mode] = ctx.match.trim().split(/\s+/)
+      const fresh = mode === 'fresh' || engine === 'fresh'
+      const ref = engine && engine !== 'fresh' ? engine : undefined
+      await ctx.reply(`▶ ${id}: ${fresh ? 'starting over' : 'resuming'}${ref ? ` on ${ref}` : ''}`)
+      tg.runner.resume(id, { ...(ref ? { engine: ref } : {}), fresh }).catch((e: unknown) => tg.sendPlain(`${id}: ${e instanceof Error ? e.message : String(e)}`))
       return
     }
     tg.runner.paused = false
@@ -182,7 +186,13 @@ export function wireControl(tg: Telegram): void {
 
   tg.bot.command('tunnel', async (ctx) => {
     const link = tg.dashboardLink?.()
-    await ctx.reply(link ?? 'tunnel is off (server.tunnel in ticketflow.config.json) or still starting')
+    // no preview: Telegram's preview fetch would spend the one-time code before you tap it
+    await ctx.reply(link ?? 'tunnel is off (server.tunnel in ticketflow.config.json) or still starting', { link_preview_options: { is_disabled: true } })
+  })
+
+  tg.bot.command('signout', async (ctx) => {
+    const n = tg.revokeSessions?.() ?? 0
+    await ctx.reply(`Signed out ${n} dashboard session${n === 1 ? '' : 's'}. /tunnel gives a new one-time link.`)
   })
 
   tg.bot.command('help', async (ctx) => {

@@ -4,12 +4,16 @@ import type { Engine, RunOptions, RunResult } from './types.js'
 // Lanes install, run dev servers and edit files without asking, like the other engines.
 const PERMISSION = JSON.stringify({ '*': 'allow', edit: 'allow', bash: 'allow', webfetch: 'allow', external_directory: 'allow' })
 
+// no tools: the answer comes from the prompt alone
+const NO_TOOLS = JSON.stringify({ '*': 'deny', edit: 'deny', bash: 'deny', webfetch: 'deny', external_directory: 'deny' })
+
 // OpenCode (sst/opencode): `opencode run --format json`, any provider it is signed in to
 // (OpenCode Zen free models, OpenRouter ":free" models, a ChatGPT or Copilot plan, local models).
 // The model is "provider/model"; empty uses opencode's own default. No effort setting.
 export const opencode: Engine = {
   id: 'opencode',
   label: 'OpenCode',
+  noTools: true,
   async run(opts: RunOptions): Promise<RunResult> {
     const args = ['run', '--format', 'json']
     if (opts.model) args.push('--model', opts.model)
@@ -45,7 +49,7 @@ export const opencode: Engine = {
         const t = obj(part.tokens)
         tokens += (num(t.input) ?? 0) + (num(t.output) ?? 0) + (num(t.reasoning) ?? 0)
       }
-    }, { ...process.env, OPENCODE_PERMISSION: PERMISSION }, opts.signal)
+    }, { ...process.env, OPENCODE_PERMISSION: opts.noTools ? NO_TOOLS : PERMISSION }, opts.signal)
     return { sessionId, text, exitCode, costUsd: cost || null, model: opts.model || null, tokens: tokens || null, stderr }
   },
   async health() {

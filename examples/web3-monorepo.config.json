@@ -1,0 +1,28 @@
+{
+  "project": { "name": "apps-monorepo", "web3": true },
+  "repo": {
+    "path": "/Users/YOU/code/apps-monorepo",
+    "baseBranch": "main",
+    "branchPattern": "linear/{id}",
+    "commands": {
+      "test": "pnpm test:manager",
+      "typecheck": "pnpm typecheck:manager",
+      "lint": "pnpm check",
+      "dev": "pnpm --filter=manager dev --port",
+      "storybook": "pnpm --filter=manager exec storybook dev --ci --no-open -p"
+    }
+  },
+  "wiki": {
+    "path": "/Users/YOU/code/team-wiki",
+    "alwaysRead": ["standards/engineering/core.md", "standards/engineering/typescript/README.md"],
+    "byKeyword": {
+      "regist": ["knowledge/apps/registration.md"],
+      "renew": ["knowledge/apps/renewal.md"],
+      "wallet": ["knowledge/integrations/wallets.md"]
+    }
+  },
+  "tracker": { "kind": "linear" },
+  "linear": { "teamKey": "WEB", "watchStates": ["Ready", "Todo", "In Progress"] },
+  "classifier": { "autoLabels": ["Low", "Design Ready", "improvement"] },
+  "server": { "tunnel": false }
+}

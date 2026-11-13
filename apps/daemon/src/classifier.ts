@@ -30,10 +30,24 @@ export function classify(issue: LinearIssue, cfg: Config['classifier'], autopilo
   const small = issue.estimate === null || issue.estimate <= 2
   const autoLabel = has(cfg.autoLabels)
 
+  // a label you set to start by itself (support fixes, small tweaks), UI or not
+  const startLabel = has(cfg.startLabels ?? [])
+  if (startLabel && small) {
+    const reason = `small, with label ${issue.labels.filter((l) => (cfg.startLabels ?? []).includes(l)).join(', ')}`
+    return { decision: autopilot ? 'auto' : 'ask', lane, small: true, reason: autopilot ? `${reason}; autopilot` : reason }
+  }
   if (uiHint && small && (autoLabel || !labels.has('Bug'))) {
     const reason = `looks like a small UI change ("${uiHint}"${autoLabel ? ', low-risk label' : ''})`
     return { decision: autopilot ? 'auto' : 'ask', lane: 'lite', small: true, reason: autopilot ? `${reason}; autopilot` : reason }
   }
 
   return { decision: 'ask', lane, small: false, reason: lane === 'full' ? 'bug/risk label: suggesting the full flow' : 'no auto rule matched' }
+}
+
+// A ticket that changes what people see: triage says UI, a UI or design label, or UI words in the title.
+export function looksVisual(t: { readonly title: string; readonly labels: readonly string[] }, uiHints: readonly string[], triage?: { readonly kind: string }): boolean {
+  if (triage) return triage.kind === 'ui'
+  if (t.labels.some((l) => /\b(ui|ux|design|frontend|visual)\b/i.test(l))) return true
+  const title = t.title.toLowerCase()
+  return uiHints.some((h) => new RegExp(`\\b${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(title))
 }

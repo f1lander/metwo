@@ -13,7 +13,7 @@ export interface UploadedMedia {
 
 class GithubSignedOut extends Error {
   constructor() {
-    super('the metwo GitHub browser is signed out; sign in again from Health or with /ghlogin')
+    super('the mevo GitHub browser is signed out; sign in again from Health or with /ghlogin')
   }
 }
 
@@ -22,7 +22,7 @@ const COMPOSER = ['textarea#new_comment_field', 'textarea[name="comment[body]"]'
 const VIDEO = /\.(mp4|mov|webm)$/i
 const MAX_BYTES = 10 * 1024 * 1024
 
-// GitHub only attaches files through its web composer, so metwo drives one: a Chromium with its
+// GitHub only attaches files through its web composer, so mevo drives one: a Chromium with its
 // own profile (signed in once by you), the comment box on the PR, and the same file input a drag
 // and drop uses. The comment is never posted; the box is emptied once the links are read.
 export class GithubBrowser {

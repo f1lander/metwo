@@ -28,13 +28,32 @@ export function wireMessages(tg: Telegram): void {
     const pr = /github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/.exec(text)
     if (pr && !ticketIn(text) && tg.reviews) {
       const kb = new InlineKeyboard().text(`🔎 review #${pr[1]}`, `rvadd:${pr[1]}`).text('no', 'stopno')
-      await ctx.reply(`Review PR #${pr[1]}? metwo checks it out, runs it and drafts findings; nothing is posted until you say so.`, { reply_markup: kb })
+      await ctx.reply(`Review PR #${pr[1]}? mevo checks it out, runs it and drafts findings; nothing is posted until you say so.`, { reply_markup: kb })
+      return
+    }
+    // a Linear issue link that is not on the board yet: take it, or only track it
+    const lin = /linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)/i.exec(text)?.[1]?.toUpperCase()
+    if (lin && tg.importIssue && !tg.store.get(lin)) {
+      const kb = new InlineKeyboard().text('🙋 take it', `limp:${lin}`).text('👀 only track', `ladd:${lin}`).text('no', 'stopno')
+      await ctx.reply(`${lin} isn't on the board. Take it (assigns it to you in Linear) or only track it?`, { reply_markup: kb })
       return
     }
     // plain words about a ticket: "fix the title over the back button in WEB-654",
     // or a reply to any message of that ticket
     const id = ticketIn(text) ?? ticketIn(replied?.text ?? replied?.caption ?? '')
     await tg.proposeInstruction(id, text, tg.takePhotos())
+  })
+
+  tg.bot.callbackQuery(/^(limp|ladd):(.+)$/, async (ctx) => {
+    const id = ctx.match[2] ?? ''
+    await ctx.editMessageReplyMarkup()
+    if (!tg.importIssue) return ctx.answerCallbackQuery()
+    try {
+      const t = await tg.importIssue(id, ctx.match[1] === 'limp')
+      await ctx.answerCallbackQuery({ text: `${t.id} is on the board` })
+    } catch (error) {
+      await ctx.answerCallbackQuery({ text: error instanceof Error ? error.message.slice(0, 180) : String(error) })
+    }
   })
 
   // a screenshot: its caption is the instruction; with no caption it waits for the next message

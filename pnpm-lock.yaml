@@ -20,6 +20,9 @@ importers:
       '@linear/sdk':
         specifier: ^61.0.0
         version: 61.0.0
+      '@mevo/mascot':
+        specifier: workspace:*
+        version: link:../../packages/mascot
       '@ticketflow/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -51,6 +54,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@mevo/mascot':
+        specifier: workspace:*
+        version: link:../../packages/mascot
       '@tauri-apps/api':
         specifier: ^2.12.4
         version: 2.12.4
@@ -94,6 +100,18 @@ importers:
       vite:
         specifier: ^7.1.12
         version: 7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)
+
+  packages/mascot:
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.2
+        version: 19.3.0
+      react:
+        specifier: ^19.2.0
+        version: 19.3.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
   packages/shared:
     devDependencies:

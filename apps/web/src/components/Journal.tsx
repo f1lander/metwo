@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useState } from 'react'
 import { actions, mediaUrl } from '../lib/api.js'
 import { desktop } from '../lib/tauri.js'
+import { Markdown } from './Markdown.js'
 import { Button, Mono, Section } from './ui.js'
 import { failed } from '../lib/notice.js'
 
@@ -18,6 +19,7 @@ const KIND: Record<JournalKind, { readonly label: string; readonly dot: string }
   linear: { label: 'Linear', dot: 'bg-[#5e6ad2]' },
   comment: { label: 'Comment', dot: 'bg-accent' },
   note: { label: 'Note', dot: 'bg-fg' },
+  ask: { label: 'Chat', dot: 'bg-fg-2' },
 }
 
 // Everything done on the ticket, newest first, plus a box for your own notes.
@@ -58,6 +60,7 @@ export function Journal({ ticket }: { ticket: Ticket }) {
         ) : undefined
       }
     >
+      {ticket.archived && <p className="text-xs text-dim">Closed a while ago: the entries' texts, PR comments and checks are kept in data/archive/{ticket.id}.json.</p>}
       <form
         className="flex gap-2"
         onSubmit={(e) => {
@@ -131,14 +134,14 @@ function Entry({ entry: e, ticketId }: { entry: JournalEntry; ticketId: string }
       )}
       <AnimatePresence initial={false}>
         {open && e.body && (
-          <motion.pre
+          <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="mx-1 mb-2 max-h-72 overflow-auto rounded-md border border-line bg-sunk px-3 py-2 font-sans text-xs leading-relaxed whitespace-pre-wrap text-fg-2"
+            className="mx-1 mb-2 max-h-72 overflow-auto rounded-md border border-line bg-sunk px-3 py-2 text-xs leading-relaxed text-fg-2"
           >
-            {e.body}
-          </motion.pre>
+            <Markdown source={e.body} ticketId={ticketId} className="md-sm" />
+          </motion.div>
         )}
       </AnimatePresence>
     </motion.li>

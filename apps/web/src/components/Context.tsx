@@ -5,7 +5,8 @@ import { loadIssue, loadPrView } from '../lib/api.js'
 import { desktop } from '../lib/tauri.js'
 import { Markdown } from './Markdown.js'
 import { prState } from './status.js'
-import { Pill, timeAgo } from './ui.js'
+import { linearAvatar, Person, Pill, timeAgo } from './ui.js'
+import { PrMetaCard } from './PrMeta.js'
 
 export type Tab = 'work' | 'visual' | 'issue' | 'pr'
 
@@ -82,9 +83,14 @@ export function IssueTab({ ticket: t }: { ticket: Ticket }) {
           <>
             <Pill>{data.state}</Pill>
             {data.priority && data.priority !== 'No priority' && <Pill>{data.priority}</Pill>}
-            <span>
-              by {data.creator} · updated {timeAgo(data.updatedAt)} ago
+            <span className="flex items-center gap-1">
+              by <Person name={data.creator} src={linearAvatar(data.creatorPerson)} className="text-fg-2" /> · updated {timeAgo(data.updatedAt)} ago
             </span>
+            {data.assigneePerson && (
+              <span className="flex items-center gap-1">
+                assigned to <Person name={data.assigneePerson.name} src={linearAvatar(data.assigneePerson)} className="text-fg-2" />
+              </span>
+            )}
           </>
         )}
       </Bar>
@@ -107,7 +113,7 @@ export function IssueTab({ ticket: t }: { ticket: Ticket }) {
             {comments.map((c) => (
               <motion.div key={`${c.createdAt}-${c.author}`} layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="rounded-lg border border-line bg-bg px-4 py-3">
                 <div className="mb-1.5 text-[11px] text-muted">
-                  <strong className="font-medium text-fg-2">{c.author}</strong> · {timeAgo(c.createdAt)} ago
+                  <Person name={c.author} src={linearAvatar(c.person)} className="align-middle font-medium text-fg-2" /> · {timeAgo(c.createdAt)} ago
                 </div>
                 <Markdown source={c.body} ticketId={t.id} />
               </motion.div>
@@ -134,6 +140,7 @@ export function PrTab({ ticket: t }: { ticket: Ticket }) {
         )}
       </Bar>
       {error && <div className="rounded-lg border border-line bg-panel px-3 py-2.5 text-xs text-muted">{error}</div>}
+      {data?.source === 'github' && t.pr && <PrMetaCard kind="ticket" id={t.id} version={t.pr.syncedAt} />}
       {!data && !error && <Skeleton />}
       {data && (
         <div className="rounded-lg border border-line bg-panel px-4 py-3.5">

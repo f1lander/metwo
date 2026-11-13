@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useState } from 'react'
 import { learningActions, loadLearnings } from '../lib/api.js'
 import { Markdown } from './Markdown.js'
+import { ReviewKnowledge } from './ReviewKnowledge.js'
 import { Button, Pill, rise, stagger, timeAgo } from './ui.js'
 
 // Rules the curator proposed from PR feedback, waiting for you, and the ones every brief includes.
@@ -84,6 +85,7 @@ export function LearningsPage() {
           </ul>
         )}
       </motion.section>
+      <ReviewKnowledge />
     </motion.div>
   )
 }

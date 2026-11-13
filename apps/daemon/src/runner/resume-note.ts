@@ -31,7 +31,7 @@ export function writeResumeNote(ticket: Ticket, flowDir: string, baseBranch: str
     dirty || '(clean)',
     '',
     '## To pick it up',
-    'Resume in metwo continues the same session with this note. Or open the worktree, check the steps above and carry on by hand.',
+    'Resume in mevo continues the same session with this note. Or open the worktree, check the steps above and carry on by hand.',
   ].join('\n')
   try {
     mkdirSync(flowDir, { recursive: true })

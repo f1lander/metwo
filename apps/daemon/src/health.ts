@@ -12,7 +12,7 @@ export class HealthTracker {
   private readonly startedAt = now()
   telegram: CheckState & { bot: string | null } = { ...unknown(), bot: null }
   linear: CheckState & { lastPollAt: string | null; tracked: number } = { ...unknown(), lastPollAt: null, tracked: 0 }
-  github: CheckState = unknown()
+  github: CheckState & { login?: string | null } = unknown()
   claude: CheckState = unknown('known after the first lane runs')
   e2e: CheckState & { ports: Record<string, boolean> } = { ...unknown(), ports: {} }
   tunnel: CheckState & { url: string | null } = { ...unknown('off'), url: null }
@@ -65,7 +65,8 @@ export class HealthTracker {
     try {
       const { stdout, stderr } = await sh('gh', ['auth', 'status'], this.cfg.repo.path)
       const account = /account (\S+)/.exec(`${stdout}\n${stderr}`)?.[1] ?? /as (\S+)/.exec(`${stdout}\n${stderr}`)?.[1]
-      this.github = { ok: true, detail: account ? `signed in as ${account}` : 'signed in', at: now() }
+      const login = await sh('gh', ['api', 'user', '--jq', '.login'], this.cfg.repo.path).then((r) => r.stdout.trim() || null, () => account ?? null)
+      this.github = { ok: true, detail: account ? `signed in as ${account}` : 'signed in', at: now(), login }
     } catch (error) {
       this.github = this.bad(error instanceof Error ? error.message.split('\n').slice(-2).join(' ') : String(error))
     }
@@ -81,9 +82,11 @@ export class HealthTracker {
     const entries = await Promise.all(Object.entries(ports).map(async ([name, port]) => [name, await isOpen(port)] as const))
     const map = Object.fromEntries(entries)
     const down = entries.filter(([, up]) => !up).map(([n]) => n)
+    // all down is normal: lanes start the stack when a ticket needs it. Only a half-up stack is a problem.
+    const idle = down.length === entries.length
     this.e2e = {
-      ok: down.length === 0,
-      detail: down.length === 0 ? `${Object.keys(ports).join(', ')} up` : `down: ${down.join(', ')}${e2e.up ? ` (${e2e.up})` : ''}`,
+      ok: down.length === 0 ? true : idle ? null : false,
+      detail: down.length === 0 ? `${Object.keys(ports).join(', ')} up` : idle ? `idle, a lane starts it when needed${e2e.up ? ` (${e2e.up})` : ''}` : `down: ${down.join(', ')}${e2e.up ? ` (${e2e.up})` : ''}`,
       at: now(),
       ports: map,
     }
@@ -97,6 +100,8 @@ export class HealthTracker {
       daemon: { ok: true, detail: `up since ${this.startedAt.slice(11, 19)} UTC`, at: now() },
       telegram: this.telegram,
       linear: this.linear,
+      web3: this.cfg.project.web3 !== false,
+      tracker: { kind: this.cfg.tracker.kind, label: this.cfg.tracker.kind === 'github' ? 'GitHub' : 'Linear' },
       github: this.github,
       claude: this.claude,
       e2e: this.e2e,
@@ -110,9 +115,15 @@ export class HealthTracker {
   }
 }
 
-function isOpen(port: number): Promise<boolean> {
+// both stacks: a service on "localhost" may listen on ::1 only
+async function isOpen(port: number): Promise<boolean> {
+  const [v4, v6] = await Promise.all([isOpenOn(port, '127.0.0.1'), isOpenOn(port, '::1')])
+  return v4 || v6
+}
+
+function isOpenOn(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = connect({ port, host: '127.0.0.1' })
+    const socket = connect({ port, host })
     const done = (up: boolean) => {
       socket.destroy()
       resolve(up)

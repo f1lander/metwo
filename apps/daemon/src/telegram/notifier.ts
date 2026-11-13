@@ -1,10 +1,10 @@
 import { InlineKeyboard } from 'grammy'
-import type { PrComment, PrReview, Ticket } from '@ticketflow/shared'
+import { canFinishChecks, questionOptions, type PrComment, type PrReview, type Ticket } from '@ticketflow/shared'
 import { log } from '../log.js'
 import { esc, section400, STATUS_ICON, SUPERVISION_LABEL, VISUAL_LABEL } from './format.js'
 import type { Telegram } from './index.js'
 
-// Every message metwo sends on its own: reviews ready, questions, PR events, review requests.
+// Every message mevo sends on its own: reviews ready, questions, PR events, review requests.
 export function makeNotifier(tg: Telegram) {
   return {
   reviewReady: async (ticket: Ticket) => {
@@ -20,7 +20,11 @@ export function makeNotifier(tg: Telegram) {
       )
       return
     }
-    const kb = new InlineKeyboard().text('🚀 push + draft PR', `push:${ticket.id}`).text('discard', `skip:${ticket.id}`)
+    const lc = ticket.localChecks
+    const red = lc?.status === 'fail' ? lc.steps.filter((x) => x.ok === false) : []
+    const kb = red.length
+      ? new InlineKeyboard().text('🔧 lane fixes it', `fixlocal:${ticket.id}`).text('push anyway', `pushf:${ticket.id}`).row().text('discard', `skip:${ticket.id}`)
+      : new InlineKeyboard().text(ticket.prUrl ? '🚀 push' : '🚀 push + draft PR', `push:${ticket.id}`).text('discard', `skip:${ticket.id}`)
     const manual = section400(ticket.summary, 'Needs manual test')
     const risks = section400(ticket.summary, 'Known risks')
     await tg.send(
@@ -30,13 +34,17 @@ export function makeNotifier(tg: Telegram) {
         (ticket.visual ? `visual: *${esc(VISUAL_LABEL[ticket.visual.verdict])}*${ticket.visual.summary ? ` · ${esc(ticket.visual.summary.slice(0, 220))}` : ''}\n` : 'visual: no verdict\n') +
         (manual ? `manual test: ${esc(manual)}\n` : '') +
         (risks ? `risks: ${esc(risks)}\n` : '') +
+        (red.length ? `❌ local checks failed: *${esc(red.map((x) => x.name).join(', '))}*, no PR until it is fixed\n\`\`\`\n${esc((red[0]?.tail ?? '').split('\n').slice(-8).join('\n'))}\n\`\`\`\n` : lc?.status === 'pass' ? `✅ local checks passed${lc.specs?.length ? ` · e2e: ${esc(lc.specs.join(', '))}` : ''}\n` : '') +
         (ticket.autopilot?.held ? `🤖 autopilot stopped before the PR: ${esc(ticket.autopilot.held)}\n` : '') +
         `worktree: \`${esc(ticket.worktree ?? '')}\``,
       kb,
     )
   },
   needsInput: async (ticket: Ticket) => {
-    const msg = await tg.send(`${STATUS_ICON.needs_input} *${esc(ticket.id)}* needs you \\(reply to this message\\):\n${esc(ticket.question ?? '')}`)
+    const kb = new InlineKeyboard()
+    for (const o of questionOptions(ticket.question)) kb.text(`${o.recommended ? '⭐ ' : ''}${o.n}. ${o.label}`.slice(0, 60), `qopt:${ticket.id}:${o.n}`).row()
+    kb.text('set it aside', `qdis:${ticket.id}`)
+    const msg = await tg.send(`${STATUS_ICON.needs_input} *${esc(ticket.id)}* needs you \\(tap an option or reply to this message\\):\n${esc(ticket.question ?? '')}`, kb)
     if (msg) tg.questionMessages.set(msg.message_id, ticket.id)
   },
   prOpened: async (ticket: Ticket) => {
@@ -47,7 +55,8 @@ export function makeNotifier(tg: Telegram) {
   failed: async (ticket: Ticket) => {
     const f = ticket.failure
     const kb = new InlineKeyboard()
-      .text('↻ retry lite', `start:lite:${ticket.id}`)
+    if (canFinishChecks(ticket)) kb.text('✅ finish the checks (keeps the work)', `finish:${ticket.id}`).row()
+    kb.text('↻ retry lite', `start:lite:${ticket.id}`)
       .text('↻ retry full', `start:full:${ticket.id}`)
       .text('🔥 max', `start:max:${ticket.id}`)
       .row()
@@ -111,8 +120,10 @@ export function makeNotifier(tg: Telegram) {
     if (!p) return
     const kb = new InlineKeyboard()
     if (p.changes.length) kb.text(`✅ apply ${p.changes.length} + comment`, `descok:${ticket.id}`).text('apply, no comment', `descnc:${ticket.id}`).row()
-    kb.text('💬 comment instead', `vispost:${ticket.id}`).text('discard', `descno:${ticket.id}`)
-    const lines = p.changes.slice(0, 12).map((c) => `− ${c.from.trim().slice(0, 120)}\n+ ${c.to.trim().slice(0, 120)}`).join('\n\n')
+    if (p.trigger !== 'checks') kb.text('💬 comment instead', `vispost:${ticket.id}`)
+    kb.text('discard', `descno:${ticket.id}`)
+    const yours = p.guide?.length ? `\n\nFor you (steps in the app):\n${p.guide.slice(0, 10).map((g) => `• ${g.line.replace(/^\s*[-*] \[ \]\s*/, '').slice(0, 100)}`).join('\n')}` : ''
+    const lines = p.changes.slice(0, 12).map((c) => `− ${c.from.trim().slice(0, 120)}\n+ ${c.to.trim().slice(0, 120)}`).join('\n\n') + yours
     await tg.bot.api
       .sendMessage(tg.chatId, `📝 ${ticket.id} PR description: ${p.changes.length ? `${p.changes.length} change(s)` : 'nothing to change'}\n${p.log}\n\n${lines}`.slice(0, 4000), { reply_markup: kb, link_preview_options: { is_disabled: true } })
       .catch((e: unknown) => log.warn('telegram send failed', e))
@@ -141,14 +152,24 @@ export function makeNotifier(tg: Telegram) {
       .sendMessage(tg.chatId, `🧪 ${ticket.id} QA on preview: ${qa.verdict}\n${qa.url}\n${qa.summary ?? ''}\n\n${lines}`.slice(0, 4000), { reply_markup: kb, link_preview_options: { is_disabled: true } })
       .catch((e: unknown) => log.warn('telegram send failed', e))
   },
+  prClosed: async (ticket: Ticket) => {
+    const by = ticket.closedOnGithub?.by
+    await tg.send(`🚫 *${esc(ticket.id)}* PR \\#${ticket.pr?.number ?? ''} was closed on GitHub${by ? ` by ${esc(by)}` : ''}, so it is closed on the board too\\. The worktree stays; reopening the PR on GitHub brings it back\\.\n${esc(ticket.pr?.url ?? '')}`)
+  },
   outsidePush: async (ticket: Ticket) => {
-    const kb = new InlineKeyboard().text('🦎 ask Greptile again', `retag:${ticket.id}`)
+    const kb = new InlineKeyboard()
+    if (ticket.behindPr) kb.text('⬇️ pull from GitHub', `prpull:${ticket.id}`)
+    kb.text('🦎 ask Greptile again', `retag:${ticket.id}`)
     if (ticket.visual) kb.text('👁 re-run visual check', `visrun:${ticket.id}`)
-    await tg.send(`⬆️ *${esc(ticket.id)}* new commits on PR \\#${ticket.pr?.number ?? ''} pushed outside metwo\n${esc(ticket.pr?.url ?? '')}`, kb)
+    const state = ticket.behindPr ? (ticket.behindPr.detail ?? 'not in the worktree yet') : 'pulled into the worktree'
+    await tg.send(`⬆️ *${esc(ticket.id)}* new commits on PR \\#${ticket.pr?.number ?? ''} from GitHub: ${esc(state)}\n${esc(ticket.pr?.url ?? '')}`, kb)
   },
   prCi: async (ticket: Ticket) => {
-    const kb = new InlineKeyboard().text('🛠 let the lane look', `fix:${ticket.id}`)
-    await tg.send(`🔴 *${esc(ticket.id)}* CI failing on PR \\#${ticket.pr?.number ?? '?'}\n${esc(ticket.pr?.url ?? '')}`, kb)
+    const ci = ticket.ci
+    const kb = new InlineKeyboard().text('🛠 fix CI', `cifix:${ticket.id}`)
+    if (ci?.jobs.some((j) => j.runId)) kb.text('↻ re-run failed', `cirun:${ticket.id}`)
+    const jobs = ci?.jobs.length ? `\n${ci.jobs.map((j) => `• ${esc(j.name)}${j.onMain ? ' \\(red on main too\\)' : ''}`).join('\n')}` : ''
+    await tg.send(`🔴 *${esc(ticket.id)}* CI failing on PR \\#${ticket.pr?.number ?? '?'}${jobs}${ci ? `\n_${esc(ci.why)}_` : ''}\n${esc(ticket.pr?.url ?? '')}`, kb)
   },
   greptile: async (ticket: Ticket) => {
     const g = ticket.pr?.greptile
@@ -195,7 +216,7 @@ export function makeNotifier(tg: Telegram) {
       .join('\n')
     const kb = new InlineKeyboard()
     if (rep.findings.length) kb.text('📤 post P0–P2 as comments', `rvpost:${r.id}`)
-    if (tg.dashboardLink?.()) kb.url('open in metwo', `${tg.dashboardLink?.() ?? ''}#/r/${r.id}`)
+    if (tg.dashboardLink?.()) kb.url('open in mevo', `${tg.dashboardLink?.() ?? ''}#/r/${r.id}`)
     kb.row().url('open PR', r.url)
     await tg.send(
       `🔎 *PR \\#${r.number}* reviewed: *${esc(rep.verdict.replace('_', ' '))}*${counts ? ` · ${esc(counts)}` : ' · nothing to flag'}\n${esc(r.title)}\n\n${esc(rep.summary.slice(0, 500))}${gates.length ? `\n🔴 ${esc(gates.join(', '))} failed` : ''}${list ? `\n\n${list}` : ''}\n\n_nothing is posted until you choose; edit findings in the app_`,
@@ -207,6 +228,13 @@ export function makeNotifier(tg: Telegram) {
     await tg.send(`${STATUS_ICON.failed} *PR \\#${r.number}* review failed\n${esc((r.error ?? '').slice(0, 400))}`, kb)
   },
   reviewMoved: async (r: PrReview) => {
+    const fu = r.followUp
+    if (fu && r.posted) {
+      const s = fu.summary
+      const kb = new InlineKeyboard().text('🔎 check my comments', `rvfollow:${r.id}`).text('review again', `rvstart:${r.id}`)
+      await tg.send(`⬆️ *PR \\#${r.number}* moved since your review\n${esc(r.title)}\n${esc(`${s.resolved}/${s.total} of your comments resolved${s.replied ? `, ${s.replied} answered` : ''}${fu.commitsSince ? ` · ${fu.commitsSince} new commit(s)` : ''}`)}`, kb)
+      return
+    }
     const kb = new InlineKeyboard().text('🔎 review again', `rvstart:${r.id}`)
     await tg.send(`⬆️ *PR \\#${r.number}* has new commits since your review\n${esc(r.title)}`, kb)
   },

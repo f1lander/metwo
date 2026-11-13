@@ -1,100 +1,19 @@
 {
+  "project": { "name": "your-app", "web3": false },
   "repo": {
-    "path": "/Users/YOU/code/apps-monorepo",
+    "path": "/Users/YOU/code/your-app",
     "baseBranch": "main",
+    "branchPattern": "mevo/{id}",
+    "prTemplate": "repo",
     "commands": {
-      "test": "pnpm test:manager",
-      "typecheck": "pnpm typecheck:manager",
-      "lint": "pnpm check",
-      "dev": "pnpm --filter=manager dev --port",
-      "storybook": "pnpm --filter=manager exec storybook dev --ci --no-open -p"
+      "test": "pnpm test",
+      "typecheck": "pnpm typecheck",
+      "lint": "pnpm lint",
+      "dev": "pnpm dev --port",
+      "install": "pnpm install"
     }
   },
-  "wiki": {
-    "path": "/Users/YOU/code/ens-labs-wiki",
-    "alwaysRead": [
-      "standards/engineering/core.md",
-      "standards/engineering/typescript/README.md",
-      "standards/engineering/typescript/libraries/react.md",
-      "standards/engineering/typescript/libraries/styling.md",
-      "standards/engineering/typescript/libraries/testing.md",
-      "knowledge/apps/apps-monorepo.md"
-    ],
-    "byKeyword": {
-      "regist": [
-        "knowledge/apps/registration.md",
-        "knowledge/protocol/registrar-and-pricing.md"
-      ],
-      "renew": [
-        "knowledge/apps/renewal.md"
-      ],
-      "profile": [
-        "knowledge/apps/profile-and-records.md"
-      ],
-      "record": [
-        "knowledge/apps/profile-and-records.md",
-        "knowledge/developer/records.md"
-      ],
-      "subname": [
-        "knowledge/apps/subnames.md"
-      ],
-      "transfer": [
-        "knowledge/apps/transfers.md"
-      ],
-      "migrat": [
-        "knowledge/apps/migration.md",
-        "knowledge/protocol/migration.md"
-      ],
-      "upgrade": [
-        "knowledge/apps/migration.md"
-      ],
-      "expir": [
-        "knowledge/apps/renewal.md",
-        "knowledge/protocol/registrar-and-pricing.md"
-      ],
-      "primary": [
-        "knowledge/protocol/reverse-and-primary.md"
-      ],
-      "resol": [
-        "knowledge/apps/resolution.md"
-      ],
-      "wallet": [
-        "knowledge/integrations/rhinestone.md"
-      ],
-      "rhinestone": [
-        "knowledge/integrations/rhinestone.md"
-      ],
-      "payment": [
-        "knowledge/integrations/moonpay.md",
-        "knowledge/integrations/crossmint.md"
-      ],
-      "query": [
-        "standards/engineering/typescript/libraries/tanstack-query.md"
-      ],
-      "xstate": [
-        "standards/engineering/typescript/libraries/xstate.md"
-      ],
-      "bigname": [
-        "knowledge/apps/bigname-integration.md"
-      ]
-    }
-  },
-  "linear": {
-    "teamKey": "WEB",
-    "watchStates": [
-      "Ready",
-      "Todo",
-      "In Progress"
-    ]
-  },
-  "classifier": {
-    "autoLabels": [
-      "Low",
-      "Design Ready",
-      "improvement"
-    ]
-  },
-  "server": {
-    "tunnel": false
-  }
+  "tracker": { "kind": "github" },
+  "github": { "greptile": { "enabled": false } },
+  "server": { "tunnel": false }
 }

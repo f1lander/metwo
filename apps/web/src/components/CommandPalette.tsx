@@ -57,7 +57,8 @@ function buildCommands(tickets: readonly Ticket[], route: Route, paused: boolean
       list.push({ id: `${t.id}-full`, group, label: `${verb} full · ${t.id}`, keywords: k, run: act(() => actions.start(t, 'full'), `${t.id} queued (full)`) })
       list.push({ id: `${t.id}-max`, group, label: `${verb} max effort · ${t.id}`, keywords: `${k} max deep`, run: act(() => actions.start(t, 'max'), `${t.id} queued (max)`) })
     }
-    if (t.status === 'review_ready') list.push({ id: `${t.id}-push`, group, label: `${t.prUrl || t.pr ? 'Push to the PR' : 'Push + draft PR'} · ${t.id}`, keywords: k, run: act(() => actions.push(t), `${t.id} pushed`) })
+    if (t.status === 'review_ready' && t.localChecks?.status === 'fail') list.push({ id: `${t.id}-fixlocal`, group, label: `Fix the failed local checks · ${t.id}`, keywords: k, run: act(() => actions.fixLocalChecks(t), `${t.id}: the lane is fixing them`) })
+    else if (t.status === 'review_ready') list.push({ id: `${t.id}-push`, group, label: `${t.prUrl || t.pr ? 'Push to the PR' : 'Push + draft PR'} · ${t.id}`, keywords: k, run: act(() => actions.push(t), `${t.id} pushed`) })
     if (t.status === 'stopped') list.push({ id: `${t.id}-resume`, group, label: `Resume · ${t.id}`, keywords: `${k} resume continue stopped`, run: act(() => actions.resume(t), `${t.id} resuming`) })
     if (t.behindMain && t.status !== 'running' && t.status !== 'queued') list.push({ id: `${t.id}-main`, group, label: `Update from main · ${t.id}`, keywords: `${k} main merge behind update`, run: act(() => actions.updateMain(t), `${t.id}: merging main`) })
     if (canMoveInLinear(t)) {
@@ -90,16 +91,16 @@ function buildCommands(tickets: readonly Ticket[], route: Route, paused: boolean
     { id: 'today', group: 'Go to', label: 'Today', keywords: 'brief plan what to do reviews cycle easy ask', run: go(href.today) },
     { id: 'settings', group: 'Go to', label: 'Settings', keywords: 'autopilot budget engines limits effort lanes', run: go(href.settings()) },
     { id: 'status', group: 'Go to', label: 'Status', keywords: 'health checks daemon', run: go(href.health) },
-    { id: 'poll', group: 'metwo', label: 'Poll Linear now', keywords: 'refresh sync', run: act(() => controls.poll(), 'Linear polled') },
+    { id: 'poll', group: 'mevo', label: 'Poll Linear now', keywords: 'refresh sync', run: act(() => controls.poll(), 'Linear polled') },
     paused
-      ? { id: 'resume', group: 'metwo', label: 'Resume lanes', run: act(() => controls.resume(), 'lanes resumed') }
-      : { id: 'pause', group: 'metwo', label: 'Pause lanes', keywords: 'stop', run: act(() => controls.pause(), 'lanes paused') },
+      ? { id: 'resume', group: 'mevo', label: 'Resume lanes', run: act(() => controls.resume(), 'lanes resumed') }
+      : { id: 'pause', group: 'mevo', label: 'Pause lanes', keywords: 'stop', run: act(() => controls.pause(), 'lanes paused') },
     ...[1, 2, 3, 4, 6, 8]
       .filter((n) => n !== maxParallel)
-      .map((n) => ({ id: `parallel-${n}`, group: 'metwo', label: `Run up to ${n} lane${n === 1 ? '' : 's'} at once`, hint: `now ${maxParallel}`, keywords: 'parallel lanes concurrency queue', run: act(() => controls.parallel(n), `up to ${n} lanes at once`) })),
-    ...(['low', 'medium', 'high'] as const).map((e) => ({ id: `effort-${e}`, group: 'metwo', label: `Effort: ${e} for every lane`, keywords: 'effort think model speed', run: act(() => controls.effort(e), `lanes now run at ${e} effort`) })),
-    { id: 'bot', group: 'metwo', label: 'Restart Telegram bot', run: act(() => controls.restartBot(), 'bot restarted') },
-    ...(isDesktop ? [{ id: 'restart', group: 'metwo', label: 'Restart daemon', run: act(() => desktop.restart(), 'daemon restarted') }] : []),
+      .map((n) => ({ id: `parallel-${n}`, group: 'mevo', label: `Run up to ${n} lane${n === 1 ? '' : 's'} at once`, hint: `now ${maxParallel}`, keywords: 'parallel lanes concurrency queue', run: act(() => controls.parallel(n), `up to ${n} lanes at once`) })),
+    ...(['low', 'medium', 'high'] as const).map((e) => ({ id: `effort-${e}`, group: 'mevo', label: `Effort: ${e} for every lane`, keywords: 'effort think model speed', run: act(() => controls.effort(e), `lanes now run at ${e} effort`) })),
+    { id: 'bot', group: 'mevo', label: 'Restart Telegram bot', run: act(() => controls.restartBot(), 'bot restarted') },
+    ...(isDesktop ? [{ id: 'restart', group: 'mevo', label: 'Restart daemon', run: act(() => desktop.restart(), 'daemon restarted') }] : []),
     ...live.filter((t) => t.id !== current?.id).flatMap((t) => forTicket(t, 'Actions')),
   ]
 }

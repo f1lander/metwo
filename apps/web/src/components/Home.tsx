@@ -7,6 +7,7 @@ import { href } from '../lib/route.js'
 import { needsMe, STATUS_LABEL, statusTone } from './status.js'
 import { Button, Pill, rise, stagger } from './ui.js'
 import { TodayLink } from './Today.js'
+import { Leaderboard } from './Leaderboard.js'
 
 // Fixed per engine, never by rank (dataviz palette, dark slots).
 const ENGINE_COLOR: Record<string, string> = { claude: '#3987e5', codex: '#199e70', cursor: '#d95926', hermes: '#c98500' }
@@ -135,6 +136,8 @@ export function Home({ tickets, health, reviews }: { tickets: readonly Ticket[];
             )}
           </Tile>
 
+          <Leaderboard tickets={tickets} reviews={reviews} health={health} />
+
           <Tile className="col-span-4 max-xl:col-span-2 max-sm:col-span-1">
             <Label>Ways to spend less</Label>
             <Advices advice={advice} sample={sample} />
@@ -142,7 +145,7 @@ export function Home({ tickets, health, reviews }: { tickets: readonly Ticket[];
         </div>
 
         <p className="text-[11px] text-dim">
-          Your metwo only. Spend is what each CLI reports (Claude prices its turns at API rates even on a plan; Codex and Cursor report none, so they show up in time and tokens).
+          Your mevo only. Spend is what each CLI reports (Claude prices its turns at API rates even on a plan; Codex and Cursor report none, so they show up in time and tokens).
         </p>
       </motion.div>
     </div>

@@ -143,3 +143,75 @@
 .md > :first-child {
   margin-top: 0;
 }
+
+/* markdown inside cards, journal entries and chat bubbles */
+.md.md-sm {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.md.md-sm > * + * {
+  margin-top: 0.5em;
+}
+.md.md-sm h1,
+.md.md-sm h2,
+.md.md-sm h3 {
+  font-size: 13px;
+}
+
+/* "Tell the agent": a pill whose border is a spinning gradient */
+.vibe {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 999px;
+  padding: 1.5px;
+  box-shadow: 0 8px 28px -8px rgba(124, 92, 255, 0.55);
+  transition: transform 0.15s ease;
+}
+.vibe:hover {
+  transform: translateY(-1px);
+}
+.vibe::before {
+  content: '';
+  position: absolute;
+  inset: -200%;
+  z-index: -1;
+  background: conic-gradient(from 0deg, transparent 0 55%, #7c5cff 70%, #a08bff 82%, #e3dcff 88%, transparent 100%);
+  animation: vibe-spin 3.2s linear infinite;
+}
+.vibe > span {
+  border-radius: 999px;
+  background: var(--color-panel);
+}
+.vibe-fast::before {
+  animation-duration: 1.4s;
+}
+.vibe-warn {
+  box-shadow: 0 8px 28px -8px rgba(242, 201, 76, 0.5);
+}
+.vibe-warn::before {
+  background: conic-gradient(from 0deg, transparent 0 55%, #b8932a 70%, #f2c94c 82%, #fff1c2 88%, transparent 100%);
+  animation-duration: 1.8s;
+}
+@keyframes vibe-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vibe::before {
+    animation: none;
+    background: linear-gradient(90deg, #7c5cff, #a08bff);
+  }
+}
+
+/* the leaderboard's #1: a gold ring that slowly turns */
+.crown-ring {
+  background: conic-gradient(from 0deg, #e2b43c, #fff1c2, #c4924a, #e2b43c 60%, #fff1c2 80%, #e2b43c);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.75px), #000 calc(100% - 1.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.75px), #000 calc(100% - 1.5px));
+  box-shadow: 0 0 10px -2px rgba(226, 180, 60, 0.6);
+}
+.crown-spin {
+  animation: vibe-spin 4s linear infinite;
+}

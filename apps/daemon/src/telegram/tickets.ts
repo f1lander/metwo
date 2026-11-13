@@ -1,4 +1,4 @@
-import { modelName, type StartChoice, type Ticket } from '@ticketflow/shared'
+import { modelName, questionOptions, type StartChoice, type Ticket } from '@ticketflow/shared'
 import { esc, normalizeId, STATUS_ICON } from './format.js'
 import type { Telegram } from './index.js'
 
@@ -39,6 +39,39 @@ export function wireTickets(tg: Telegram): void {
     await ctx.reply(text || 'no tickets tracked yet')
   })
 
+  tg.bot.callbackQuery(/^qopt:([^:]+):(\d+)$/, async (ctx) => {
+    const id = ctx.match[1] ?? ''
+    const t = tg.store.get(id)
+    const o = questionOptions(t?.question).find((x) => x.n === Number(ctx.match[2]))
+    if (!t || t.status !== 'needs_input' || !o) {
+      await ctx.answerCallbackQuery({ text: 'that question is no longer open' })
+      return
+    }
+    await ctx.answerCallbackQuery({ text: `${id}: option ${o.n}` })
+    await ctx.editMessageReplyMarkup()
+    void tg.runner.answer(id, `Option ${o.n}: ${o.text}`)
+  })
+
+  tg.bot.callbackQuery(/^qdis:(.+)$/, async (ctx) => {
+    const id = ctx.match[1] ?? ''
+    await ctx.editMessageReplyMarkup()
+    try {
+      tg.runner.dismissQuestion(id)
+      await ctx.answerCallbackQuery({ text: `${id}: set aside, resume it when you want` })
+    } catch (error) {
+      await ctx.answerCallbackQuery({ text: error instanceof Error ? error.message : String(error) })
+    }
+  })
+
+  tg.bot.callbackQuery(/^finish:(.+)$/, async (ctx) => {
+    const id = ctx.match[1] ?? ''
+    await ctx.answerCallbackQuery({ text: `${id}: finishing the checks` })
+    await ctx.editMessageReplyMarkup()
+    tg.runner.finishChecks(id).catch(async (error: unknown) => {
+      await tg.sendPlain(`${id}: could not finish the checks: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  })
+
   tg.bot.callbackQuery(/^progress:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery()
     await ctx.reply(tg.progressText(ctx.match[1] ?? '') ?? 'unknown ticket')
@@ -67,6 +100,8 @@ export function wireTickets(tg: Telegram): void {
       await ctx.reply(`${rawEngine} is not enabled; see the engines section of the config`)
       return
     }
+    const no = tg.runner.canStart()
+    if (no) return void (await ctx.reply(`☕ ${no}`))
     tg.runner.enqueue(t.id, lane, engine)
     await ctx.reply(`${t.id} queued (${lane}${engine ? ` on ${engine}` : ''})`)
     tg.runner.pump()
@@ -81,7 +116,7 @@ export function wireTickets(tg: Telegram): void {
     }
     await ctx.reply(`pushing ${t.id}…`)
     try {
-      await tg.runner.push(t.id)
+      if ((await tg.runner.requestPush(t.id)) === 'checking') await ctx.reply(`running the local checks on ${t.id} first; it pushes if they pass`)
     } catch (error) {
       await tg.notifyPushFailed(t.id, error)
     }
@@ -123,8 +158,24 @@ export function wireTickets(tg: Telegram): void {
       await ctx.reply('usage: /dismiss WEB-123')
       return
     }
-    tg.runner.markDone(id)
-    await ctx.reply(`${id} closed in metwo (Linear untouched)`)
+    try {
+      const t = tg.runner.dismiss(id)
+      await ctx.reply(t.status === 'pr_draft' ? `${id} back to its PR (still open on GitHub)` : `${id} closed in mevo (Linear untouched)`)
+    } catch (e) {
+      await ctx.reply(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  tg.bot.command('reopen', async (ctx) => {
+    const id = normalizeId(ctx.match)
+    if (!id || !tg.store.get(id)) {
+      await ctx.reply('usage: /reopen WEB-123')
+      return
+    }
+    await tg.runner.reopen(id).then(
+      (r) => ctx.reply(`${id}: ${r.message}`),
+      (e: unknown) => ctx.reply(e instanceof Error ? e.message : String(e)),
+    )
   })
 
   tg.bot.command('note', async (ctx) => {
@@ -142,6 +193,8 @@ export function wireTickets(tg: Telegram): void {
   tg.bot.callbackQuery(/^starte:(\w+):(.+)$/, async (ctx) => {
     const engine = ctx.match[1] ?? ''
     const id = ctx.match[2] ?? ''
+    const no = tg.runner.canStart()
+    if (no) return void (await ctx.answerCallbackQuery({ text: `☕ ${no}`, show_alert: true }))
     tg.runner.enqueue(id, 'lite', engine)
     tg.runner.pump()
     await ctx.answerCallbackQuery({ text: `${id}: lite on ${engine}` })
@@ -151,6 +204,8 @@ export function wireTickets(tg: Telegram): void {
   tg.bot.callbackQuery(/^start:(lite|full|max):(.+)$/, async (ctx) => {
     const lane = ctx.match[1] as StartChoice
     const id = ctx.match[2] ?? ''
+    const no = tg.runner.canStart()
+    if (no) return void (await ctx.answerCallbackQuery({ text: `☕ ${no}`, show_alert: true }))
     tg.runner.enqueue(id, lane)
     tg.runner.pump()
     const waiting = tg.store.get(id)?.status === 'queued'
@@ -160,8 +215,13 @@ export function wireTickets(tg: Telegram): void {
 
   tg.bot.callbackQuery(/^done:(.+)$/, async (ctx) => {
     const id = ctx.match[1] ?? ''
-    tg.runner.markDone(id)
-    await ctx.answerCallbackQuery({ text: `${id} done` })
+    let text = `${id} done`
+    try {
+      if (tg.runner.dismiss(id).status === 'pr_draft') text = `${id} back to its PR`
+    } catch (e) {
+      text = e instanceof Error ? e.message : String(e)
+    }
+    await ctx.answerCallbackQuery({ text })
     await ctx.editMessageReplyMarkup()
   })
 
@@ -172,15 +232,36 @@ export function wireTickets(tg: Telegram): void {
     await ctx.editMessageReplyMarkup()
   })
 
-  tg.bot.callbackQuery(/^push:(.+)$/, async (ctx) => {
-    const id = ctx.match[1] ?? ''
+  // pushf: push anyway, past failed local checks
+  tg.bot.callbackQuery(/^push(f?):(.+)$/, async (ctx) => {
+    const force = ctx.match[1] === 'f'
+    const id = ctx.match[2] ?? ''
     await ctx.answerCallbackQuery({ text: `pushing ${id}…` })
     await ctx.editMessageReplyMarkup()
     try {
-      await tg.runner.push(id)
+      if ((await tg.runner.requestPush(id, force)) === 'checking') await tg.sendPlain(`running the local checks on ${id} first; it pushes if they pass`)
     } catch (error) {
       await tg.notifyPushFailed(id, error)
     }
+  })
+
+  tg.bot.callbackQuery(/^prpull:(.+)$/, async (ctx) => {
+    const id = ctx.match[1] ?? ''
+    await ctx.answerCallbackQuery({ text: `${id}: pulling from GitHub` })
+    await ctx.editMessageReplyMarkup()
+    await tg.runner.pullFromGithub(id).then(
+      (r) => tg.sendPlain(`${id}: ${r.text}`),
+      (e: unknown) => tg.sendPlain(`${id}: ${e instanceof Error ? e.message : String(e)}`),
+    )
+  })
+
+  tg.bot.callbackQuery(/^fixlocal:(.+)$/, async (ctx) => {
+    const id = ctx.match[1] ?? ''
+    await ctx.answerCallbackQuery({ text: `${id}: the lane fixes the local checks` })
+    await ctx.editMessageReplyMarkup()
+    tg.runner.fixLocalChecks(id).catch(async (error: unknown) => {
+      await tg.send(`${STATUS_ICON.failed} *${esc(id)}* ${esc(error instanceof Error ? error.message : String(error))}`)
+    })
   })
 
   tg.bot.callbackQuery(/^fix:(.+)$/, async (ctx) => {
@@ -190,6 +271,26 @@ export function wireTickets(tg: Telegram): void {
     tg.runner.addressComments(id).catch(async (error: unknown) => {
       await tg.send(`${STATUS_ICON.failed} *${esc(id)}* ${esc(error instanceof Error ? error.message : String(error))}`)
     })
+  })
+
+  tg.bot.callbackQuery(/^cifix:(.+)$/, async (ctx) => {
+    const id = ctx.match[1] ?? ''
+    await ctx.answerCallbackQuery({ text: `${id}: the lane is looking at CI` })
+    await ctx.editMessageReplyMarkup()
+    tg.runner.fixCi(id).catch(async (error: unknown) => {
+      await tg.send(`${STATUS_ICON.failed} *${esc(id)}* ${esc(error instanceof Error ? error.message : String(error))}`)
+    })
+  })
+
+  tg.bot.callbackQuery(/^cirun:(.+)$/, async (ctx) => {
+    const id = ctx.match[1] ?? ''
+    try {
+      const n = await tg.runner.rerunCi(id)
+      await ctx.answerCallbackQuery({ text: `${id}: re-running ${n} run(s)` })
+      await ctx.editMessageReplyMarkup()
+    } catch (error) {
+      await ctx.answerCallbackQuery({ text: error instanceof Error ? error.message : String(error) })
+    }
   })
 
   tg.bot.callbackQuery(/^cfix:([^:]+):(.+)$/, async (ctx) => {

@@ -16,6 +16,14 @@ import { makeNotifier } from './notifier.js'
 import { wireReviews } from './reviews.js'
 import { wireTickets } from './tickets.js'
 
+function readinessLines(t: Ticket): string {
+  const r = t.readiness
+  if (!r) return ''
+  const icon = r.verdict === 'ready' ? '✅' : r.verdict === 'clarify' ? '❓' : '⏸'
+  const head = `${icon} ${esc(`${r.verdict === 'ready' ? 'ready to start' : r.verdict === 'clarify' ? 'needs clarification' : 'hold'} · ${r.confidence}% · ${r.why}`)}`
+  return `${[head, ...r.questions.slice(0, 4).map((q) => esc(`• ${q}`))].join('\n')}\n`
+}
+
 export class Telegram {
   readonly bot: Bot
   readonly chatId: string
@@ -26,6 +34,8 @@ export class Telegram {
 
   // wired by the daemon after construction
   dashboardLink: (() => string | null) | null = null
+  // signs every phone and browser out of the dashboard
+  revokeSessions: (() => number) | null = null
   linearWriter: LinearWriter | null = null
   healthSnapshot: (() => Health) | null = null
   githubLogin: (() => Promise<string>) | null = null
@@ -133,12 +143,18 @@ export class Telegram {
     readonly live: LiveLog,
     readonly health: HealthTracker,
   ) {
-    this.bot = new Bot(token)
+    // no token: mevo runs without Telegram, every send is a no-op
+    this.bot = new Bot(token || '0:off')
+    if (!token) this.bot.api.config.use(async () => ({ ok: true, result: true }) as never)
     this.chatId = chatId
     this.wire()
   }
 
   async start(): Promise<void> {
+    if (!this.token) {
+      this.health.telegram = { ok: null, detail: 'off: no TELEGRAM_BOT_TOKEN', at: new Date().toISOString(), bot: null }
+      return
+    }
     try {
       const me = await this.bot.api.getMe()
       this.health.telegram = { ...this.health.ok(), detail: 'polling', bot: `@${me.username}` }
@@ -169,7 +185,7 @@ export class Telegram {
     await this.send(
       `${STATUS_ICON.assigned} *${esc(ticket.id)}* ${esc(ticket.title)}\n` +
         `by ${esc(ticket.createdBy)} · ${esc(ticket.labels.join(', ') || 'no labels')} · ${esc(ticket.linearState)}\n` +
-        `suggest: *${ticket.suggestedLane}* — ${esc(ticket.reason)}\n${esc(ticket.url)}`,
+        `suggest: *${ticket.suggestedLane}* — ${esc(ticket.reason)}\n${readinessLines(ticket)}${esc(ticket.url)}`,
       kb,
     )
   }
@@ -197,6 +213,12 @@ export class Telegram {
 
   async notifyPushFailed(id: string, error: unknown): Promise<void> {
     const f = explainFailure(error instanceof Error ? error.message : String(error))
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.startsWith('Local checks failed')) {
+      const kb = new InlineKeyboard().text('🔧 lane fixes it', `fixlocal:${id}`).text('push anyway', `pushf:${id}`)
+      await this.send(`❌ *${esc(id)}* not pushed: ${esc(message)}`, kb)
+      return
+    }
     const kb = new InlineKeyboard().text('↻ try push again', `push:${id}`)
     await this.send(`${STATUS_ICON.failed} *${esc(id)}* · push failed: ${esc(f.title)}\n${esc(f.detail.slice(0, 400))}\n\n→ ${esc(f.hint)}`, kb)
   }
@@ -213,6 +235,10 @@ export class Telegram {
   private wire(): void {
     this.bot.use(async (ctx, next) => {
       if (String(ctx.chat?.id) !== this.chatId) return
+      const data = ctx.callbackQuery?.data
+      const text = ctx.message?.text
+      if (data || text?.startsWith('/')) this.store.history.record({ type: 'action', via: 'telegram', action: data ?? text?.split(/\s/)[0] ?? '', ...(/(WEB-\d+|[A-Z]+-\d+)/.exec(data ?? text ?? '')?.[1] ? { ticket: /(WEB-\d+|[A-Z]+-\d+)/.exec(data ?? text ?? '')?.[1] } : {}) })
+      else if (text) this.store.history.record({ type: 'action', via: 'telegram', action: 'message' })
       await next()
     })
 
@@ -242,6 +268,8 @@ export class Telegram {
 
   // set by registerAssistant: plain questions go to the assistant
   askAssistant: ((question: string) => Promise<void>) | null = null
+  // a Linear link or id pasted here: onto the board (assigned to you, or only tracked)
+  importIssue: ((ref: string, assign: boolean) => Promise<Ticket>) | null = null
   readonly pending = new Map<string, { id: string | null; text: string; images: { name: string; bytes: Buffer }[] }>()
 
   // screenshots sent in the last 5 minutes go with the next instruction
@@ -280,7 +308,7 @@ export class Telegram {
       return
     }
     const kb = new InlineKeyboard()
-    if (this.askAssistant) kb.text('🤔 ask metwo instead', `askq:${key}`).row()
+    if (this.askAssistant) kb.text('🤔 ask mevo instead', `askq:${key}`).row()
     open.forEach((t, i) => {
       kb.text(t.id, `tellfor:${key}:${t.id}`)
       if (i % 3 === 2) kb.row()

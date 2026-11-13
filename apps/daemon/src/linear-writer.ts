@@ -1,15 +1,15 @@
 import { markdownSection, type Ticket } from '@ticketflow/shared'
 import type { CommentMoment, Config } from './config.js'
-import type { Linear } from './linear.js'
+import type { Tracker } from './tracker.js'
 import { log } from './log.js'
 import type { Store } from './store.js'
 
-// Every write metwo makes to Linear goes through here, so each one is signed, journaled and
+// Every write mevo makes to Linear goes through here, so each one is signed, journaled and
 // switchable from config (linear.comments.enabled / linear.comments.on).
 export class LinearWriter {
   constructor(
     private readonly cfg: Config,
-    private readonly linear: Linear,
+    private readonly linear: Tracker,
     private readonly store: Store,
   ) {}
 
@@ -73,7 +73,7 @@ export class LinearWriter {
 
     const content = parts.filter(Boolean).join('\n\n').trim()
     if (!content) return null
-    const header = `> 🤖 **metwo agent**${t.lane ? ` · ${t.lane} lane` : ''}`
+    const header = `> 🤖 **mevo agent**${t.lane ? ` · ${t.lane} lane` : ''}`
     return `${header}\n\n${content}\n\n---\n_${this.cfg.linear.comments.signature}_`
   }
 }

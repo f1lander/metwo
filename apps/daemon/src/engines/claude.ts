@@ -3,11 +3,36 @@ import type { Engine, RunOptions, RunResult } from './types.js'
 
 // Claude Code: `claude -p` with stream-json. CLAUDE_CODE_EFFORT_LEVEL is stripped because, when
 // set, it silently overrides --effort.
+// Lanes run without prompts, but never publish: pushing, PRs, comments and the GitHub API are
+// the daemon's job, after you review. Deny rules hold even in bypassPermissions.
+export const LANE_DENY = [
+  'Bash(git push:*)',
+  'Bash(gh pr create:*)',
+  'Bash(gh pr comment:*)',
+  'Bash(gh pr edit:*)',
+  'Bash(gh pr merge:*)',
+  'Bash(gh pr ready:*)',
+  'Bash(gh pr review:*)',
+  'Bash(gh pr close:*)',
+  'Bash(gh issue:*)',
+  'Bash(gh api:*)',
+  'Bash(gh release:*)',
+  'Bash(gh repo:*)',
+  'Bash(gh secret:*)',
+  'Bash(gh auth:*)',
+  'Bash(gh gist:*)',
+]
+const READ_ONLY = ['Read', 'Grep', 'Glob', 'LS']
+const GIT_READ = ['Bash(git log:*)', 'Bash(git show:*)', 'Bash(git diff:*)', 'Bash(git blame:*)', 'Bash(git status:*)']
+
 export const claude: Engine = {
   id: 'claude',
   label: 'Claude Code',
+  readOnly: true,
+  noTools: true,
   async run(opts: RunOptions): Promise<RunResult> {
-    const args = ['-p', opts.prompt, '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose', '--effort', opts.effort]
+    const perms = opts.noTools ? ['--permission-mode', 'default', '--disallowedTools', 'Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task', 'Read', 'Grep', 'Glob', 'LS'] : opts.readOnly ? ['--permission-mode', 'default', '--allowedTools', ...READ_ONLY, ...(opts.gitRead ? GIT_READ : [])] : ['--permission-mode', 'bypassPermissions', '--disallowedTools', ...LANE_DENY]
+    const args = ['-p', opts.prompt, ...perms, '--output-format', 'stream-json', '--verbose', '--effort', opts.effort]
     if (opts.model) args.push('--model', opts.model)
     if (opts.resume) args.push('--resume', opts.resume)
     const { CLAUDE_CODE_EFFORT_LEVEL: _dropped, ...env } = process.env
